@@ -154,11 +154,13 @@ export default function OrganizePages() {
                 onDragOver={e => handleDragOverItem(e, i)}
                 onDragEnd={() => setDragIdx(null)}
               >
-                <img
-                  src={p.thumb}
-                  alt={`Page ${p.idx}`}
-                  style={{ transform: `rotate(${p.rotation}deg)` }}
-                />
+                <div style={{ overflow: 'hidden', borderRadius: 2 }}>
+                  <img
+                    src={p.thumb}
+                    alt={`Page ${p.idx}`}
+                    style={{ transform: `rotate(${p.rotation}deg)`, transition: 'transform 0.2s' }}
+                  />
+                </div>
                 <div className="thumb-label">Page {p.idx}</div>
                 <div className="thumb-actions">
                   <button className="thumb-btn" onClick={() => rotatePage(i, 90)} title="Rotate 90">

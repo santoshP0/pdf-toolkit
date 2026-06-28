@@ -54,7 +54,7 @@ export default function Watermark() {
           font,
           color: rgb(0.5, 0.5, 0.5),
           opacity,
-          rotate: degrees(angle),
+          rotate: degrees(-angle),
         });
       });
 
@@ -135,7 +135,7 @@ export default function Watermark() {
                 onChange={e => setOpacity(Number(e.target.value))}
                 style={{ flex: 1, maxWidth: 200 }}
               />
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: 'var(--ink-soft)' }}>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                 {Math.round(opacity * 100)}%
               </span>
             </div>
@@ -150,7 +150,7 @@ export default function Watermark() {
                 onChange={e => setAngle(Number(e.target.value))}
                 style={{ width: 70 }}
               />
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: 'var(--ink-soft)' }}>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                 degrees
               </span>
             </div>
@@ -159,9 +159,9 @@ export default function Watermark() {
           <div style={{
             textAlign: 'center',
             padding: '2rem',
-            background: 'var(--chrome)',
-            border: '1px solid var(--line)',
-            borderRadius: 10,
+            background: 'var(--surface)',
+            border: '2px solid var(--sketch-text)',
+            borderRadius: 4,
             marginBottom: '1.5rem',
             position: 'relative',
             overflow: 'hidden',
@@ -171,7 +171,7 @@ export default function Watermark() {
             justifyContent: 'center',
           }}>
             <div style={{
-              fontFamily: "'Spectral', serif",
+              fontFamily: "var(--font-hand)",
               fontSize: `${Math.min(fontSize * 0.5, 40)}px`,
               fontWeight: 700,
               color: `rgba(128, 128, 128, ${opacity})`,
@@ -187,7 +187,7 @@ export default function Watermark() {
               right: 12,
               fontFamily: "'JetBrains Mono', monospace",
               fontSize: '0.65rem',
-              color: 'var(--ink-soft)',
+              color: 'var(--text-muted)',
             }}>preview</div>
           </div>
 

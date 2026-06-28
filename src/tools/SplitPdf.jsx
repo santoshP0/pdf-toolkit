@@ -128,7 +128,7 @@ export default function SplitPdf() {
             </div>
             <div className="control-row">
               <span className="control-label" />
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', color: 'var(--ink-soft)' }}>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', color: 'var(--text-muted)' }}>
                 Use commas to separate ranges. Total pages: {pageCount}
               </span>
             </div>

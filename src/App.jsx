@@ -13,21 +13,27 @@ import CompressPdf from './tools/CompressPdf';
 import Watermark from './tools/Watermark';
 
 const TOOLS = [
-  { id: 'merge', title: 'Merge PDF', emoji: '📑', cat: 'organize', desc: 'Combine several PDFs into one — drag to reorder.' },
-  { id: 'split', title: 'Split PDF', emoji: '✂️', cat: 'organize', desc: 'Pull out page ranges or single pages.' },
-  { id: 'organize', title: 'Organize Pages', emoji: '🗃️', cat: 'organize', desc: 'Reorder, rotate and delete pages visually.' },
-  { id: 'img2pdf', title: 'Images → PDF', emoji: '🖼️', cat: 'convert', desc: 'Turn JPG & PNG files into one clean PDF.' },
-  { id: 'pdf2img', title: 'PDF → Images', emoji: '🏞️', cat: 'convert', desc: 'Export every page as a PNG or JPG.' },
-  { id: 'ocr', title: 'OCR Text', emoji: '🔍', cat: 'convert', desc: 'Pull selectable text out of scanned pages.' },
-  { id: 'numbers', title: 'Page Numbers', emoji: '#️⃣', cat: 'edit', desc: 'Stamp page numbers — your position & style.' },
-  { id: 'rotate', title: 'Rotate PDF', emoji: '🔄', cat: 'edit', desc: 'Spin all or chosen pages the right way up.' },
-  { id: 'compress', title: 'Compress PDF', emoji: '🗜️', cat: 'optimize', desc: 'Re-encode images to shrink the file size.' },
-  { id: 'watermark', title: 'Watermark', emoji: '💧', cat: 'security', desc: 'Lay a text watermark over every page.' },
+  { id: 'merge', title: 'Merge PDF', icon: '📑', cat: 'organize', desc: 'Combine several PDFs into one — drag to reorder.' },
+  { id: 'split', title: 'Split PDF', icon: '✂️', cat: 'organize', desc: 'Pull out page ranges or single pages.' },
+  { id: 'organize', title: 'Organize Pages', icon: '🗃️', cat: 'organize', desc: 'Reorder, rotate and delete pages visually.' },
+  { id: 'img2pdf', title: 'Images → PDF', icon: '🖼️', cat: 'convert', desc: 'Turn JPG & PNG files into one clean PDF.' },
+  { id: 'pdf2img', title: 'PDF → Images', icon: '🏞️', cat: 'convert', desc: 'Export every page as a PNG or JPG.' },
+  { id: 'ocr', title: 'OCR Text', icon: '🔍', cat: 'convert', desc: 'Pull selectable text out of scanned pages.' },
+  { id: 'numbers', title: 'Page Numbers', icon: '#️⃣', cat: 'edit', desc: 'Stamp page numbers — your position & style.' },
+  { id: 'rotate', title: 'Rotate PDF', icon: '🔄', cat: 'edit', desc: 'Spin all or chosen pages the right way up.' },
+  { id: 'compress', title: 'Compress PDF', icon: '🗜️', cat: 'optimize', desc: 'Re-encode images to shrink the file size.' },
+  { id: 'watermark', title: 'Watermark', icon: '💧', cat: 'security', desc: 'Lay a text watermark over every page.' },
 ];
 
 const CATEGORIES = ['all', 'organize', 'convert', 'edit', 'optimize', 'security'];
-const CARD_COLORS = ['#ffe17a', '#bcd6f4', '#ffcfa8', '#c6e7b6', '#dccef2', '#f8c7d7'];
-const CARD_TILTS = [-2, 1.5, -1, 2, -1.5, 1, -2, 1.5, -1, 2];
+
+const CAT_CARD_STYLES = {
+  organize: { bg: 'var(--cat-organize-bg)', text: 'var(--cat-organize)' },
+  convert:  { bg: 'var(--cat-convert-bg)',  text: 'var(--cat-convert)' },
+  edit:     { bg: 'var(--cat-edit-bg)',     text: 'var(--cat-edit)' },
+  optimize: { bg: 'var(--cat-optimize-bg)', text: 'var(--cat-optimize)' },
+  security: { bg: 'var(--cat-security-bg)', text: 'var(--cat-security)' },
+};
 
 const TOOL_COMPONENTS = {
   merge: MergePdf,
@@ -91,33 +97,40 @@ function App() {
         <header className="header">
           <div className="header-left">
             <span className="logo-badge">PDF</span>
-            <span className="logo-text">pdftoolbox</span>
+            <button className="ws-back" onClick={() => setOpenTool(null)}>
+              ← all tools
+            </button>
+            <span style={{ color: 'var(--sketch-text)', opacity: 0.3, fontSize: 18, lineHeight: 1 }}>|</span>
+            <span style={{
+              fontSize: 15, fontWeight: 700,
+              color: 'var(--sketch-text)',
+              fontFamily: "var(--font-hand)",
+            }}>
+              {tool.title.toLowerCase()}
+            </span>
           </div>
           <div className="header-right">
-            <div className="privacy-badge">
-              <span className="privacy-dot" />
-              local toolbox &middot; 100% private
-            </div>
+            <span className="privacy-dot" />
+            <span className="privacy-badge">local toolbox · 100% private</span>
             <button className="theme-toggle" onClick={() => setDark(d => !d)}>
-              {dark ? '☀️' : '🌙'}
+              <span style={{ fontSize: 14, lineHeight: 1 }}>{dark ? '☀️' : '🌙'}</span>
             </button>
           </div>
         </header>
-        <div className="workspace">
-          <button className="ws-back" onClick={() => setOpenTool(null)}>
-            \u2190 back to tools
-          </button>
-          <div className="ws-header">
-            <span className="ws-emoji">{tool.emoji}</span>
-            <div className="ws-info">
-              <h2>{tool.title}</h2>
-              <p>{tool.desc}</p>
+        <div className="main-content">
+          <div className="workspace">
+            <div className="ws-header">
+              <span className="ws-emoji">{tool.icon}</span>
+              <div className="ws-info">
+                <h2>{tool.title}</h2>
+                <p>{tool.desc}</p>
+              </div>
             </div>
+            <ToolComponent />
           </div>
-          <ToolComponent />
         </div>
         <footer className="footer">
-          runs 100% in your browser &middot; powered by pdf-lib &middot; pdf.js &middot; tesseract.js
+          runs 100% in your browser · powered by pdf-lib · pdf.js · tesseract.js
         </footer>
       </>
     );
@@ -131,96 +144,110 @@ function App() {
           <span className="logo-text">pdftoolbox</span>
         </div>
         <div className="header-right">
-          <div className="privacy-badge">
-            <span className="privacy-dot" />
-            local toolbox &middot; 100% private
-          </div>
+          <span className="privacy-dot" />
+          <span className="privacy-badge">local toolbox · 100% private</span>
           <button className="theme-toggle" onClick={() => setDark(d => !d)}>
-            {dark ? '☀️' : '🌙'}
+            <span style={{ fontSize: 14, lineHeight: 1 }}>{dark ? '☀️' : '🌙'}</span>
           </button>
         </div>
       </header>
 
-      <section className="hero">
-        <div className="hero-accent">&ndash; the whole toolkit &ndash;</div>
-        <h1 className="hero-title">everything for your PDFs</h1>
-      </section>
+      <div className="main-content">
+        <section className="hero">
+          <div className="hero-accent">— the whole toolkit —</div>
+          <h1 className="hero-title">everything for your PDFs</h1>
+        </section>
 
-      <div className="search-wrap">
-        <div className="search-box">
-          <span className="search-icon">🔍</span>
-          <input
-            className="search-input"
-            type="text"
-            placeholder="search tools..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+        <div className="search-wrap">
+          <div className="search-box">
+            <span className="search-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
+              </svg>
+            </span>
+            <input
+              className="search-input"
+              type="text"
+              placeholder="search the toolbox..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
         </div>
-      </div>
 
-      <div className="categories">
-        {CATEGORIES.map(cat => (
-          <button
-            key={cat}
-            className={`cat-pill${activeCat === cat ? ' active' : ''}`}
-            onClick={() => setActiveCat(cat)}
-          >
-            {cat}
-          </button>
-        ))}
-      </div>
-
-      <div className="divider">
-        <span className="divider-text">all {filtered.length} of them \u2193</span>
-        <span className="divider-line" />
-      </div>
-
-      {filtered.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-emoji">🔍</div>
-          <div className="empty-title">No tools found</div>
-          <div className="empty-sub">Try a different search or category</div>
+        <div className="categories">
+          {CATEGORIES.map(cat => (
+            <button
+              key={cat}
+              className={`cat-pill${activeCat === cat ? ' active' : ''}`}
+              onClick={() => { setActiveCat(cat); setSearch(''); }}
+            >
+              {cat}
+            </button>
+          ))}
         </div>
-      ) : (
-        <div className="grid">
-          {filtered.map((tool, i) => {
-            const idx = TOOLS.indexOf(tool);
-            return (
-              <div
-                key={tool.id}
-                className="card"
-                style={{
-                  backgroundColor: CARD_COLORS[idx % CARD_COLORS.length],
-                  transform: `rotate(${CARD_TILTS[idx % CARD_TILTS.length]}deg)`,
-                }}
-                onClick={() => setOpenTool(tool.id)}
-              >
-                <div className="card-top">
-                  <span className="card-emoji">{tool.emoji}</span>
-                  <div className="card-meta">
-                    <span className="card-number">#{String(idx + 1).padStart(2, '0')}</span>
-                    <button
-                      className={`card-fav${favorites.includes(tool.id) ? ' active' : ''}`}
-                      onClick={(e) => toggleFav(tool.id, e)}
-                    >
-                      {favorites.includes(tool.id) ? '\u2605' : '\u2606'}
-                    </button>
+
+        <div className="divider">
+          <span className="divider-text">
+            {search
+              ? `search matches (${filtered.length}) ↓`
+              : activeCat === 'all'
+                ? `all ${filtered.length} of them ↓`
+                : `${activeCat} tools (${filtered.length}) ↓`
+            }
+          </span>
+          <span className="divider-line" />
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-emoji">🔍</div>
+            <div className="empty-title">No tools found</div>
+            <div className="empty-sub">Try a different search or category</div>
+          </div>
+        ) : (
+          <div className="grid">
+            {filtered.map((tool, i) => {
+              const idx = TOOLS.indexOf(tool);
+              const catStyle = CAT_CARD_STYLES[tool.cat] || CAT_CARD_STYLES.organize;
+              return (
+                <div
+                  key={tool.id}
+                  className="card"
+                  style={{ backgroundColor: catStyle.bg }}
+                  onClick={() => setOpenTool(tool.id)}
+                >
+                  <div className="card-top">
+                    <span className="card-emoji" style={{ color: catStyle.text }}>{tool.icon}</span>
+                    <div className="card-meta">
+                      <span className="card-number" style={{ color: catStyle.text }}>#{String(idx + 1).padStart(2, '0')}</span>
+                      <button
+                        className={`card-fav${favorites.includes(tool.id) ? ' active' : ''}`}
+                        onClick={(e) => toggleFav(tool.id, e)}
+                      >
+                        ★
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                    <div>
+                      <div className="card-title">{tool.title}</div>
+                      <div className="card-desc">{tool.desc}</div>
+                    </div>
+                    <div className="card-footer">
+                      <span className="card-cat" style={{ color: catStyle.text }}>{tool.cat}</span>
+                    </div>
                   </div>
                 </div>
-                <div className="card-title">{tool.title}</div>
-                <div className="card-desc">{tool.desc}</div>
-                <div className="card-footer">
-                  <span className="card-cat">{tool.cat}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <footer className="footer">
-        runs 100% in your browser &middot; powered by pdf-lib &middot; pdf.js &middot; tesseract.js
+        runs 100% in your browser · powered by pdf-lib · pdf.js · tesseract.js
       </footer>
     </>
   );

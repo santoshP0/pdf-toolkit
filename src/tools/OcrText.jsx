@@ -136,7 +136,7 @@ export default function OcrText() {
 
           {preview && (
             <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
-              <img src={preview} alt="Preview" style={{ maxWidth: '100%', maxHeight: 300, borderRadius: 8, border: '1px solid var(--line)' }} />
+              <img src={preview} alt="Preview" style={{ maxWidth: '100%', maxHeight: 300, borderRadius: 4, border: '2px solid var(--sketch-text)' }} />
             </div>
           )}
 

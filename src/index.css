@@ -1,27 +1,66 @@
+/* ══════════════════════════════════════════════════
+   DESIGN SYSTEM — CSS Variables
+   :root = light   [data-theme="dark"] = dark
+   Sketchbook / Workbench aesthetic
+   ══════════════════════════════════════════════════ */
 :root {
-  --paper: #f2ede4;
-  --paper-2: #eae2d3;
-  --ink: #2b2620;
-  --ink-soft: #7c7264;
-  --line: #dccfbb;
-  --dot: rgba(60, 50, 35, 0.07);
-  --chrome: #fbf8f2;
-  --badge: #26221c;
-  --badge-ink: #f3eee3;
+  /* Shared */
+  --radius: 4px;
+  --font-sans: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-hand: 'Architects Daughter', var(--font-sans);
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --transition: 0.1s ease-out;
+
+  /* Light palette */
+  --sketch-bg: #f5efe6;
+  --sketch-dot: #cbd5e1;
+  --sketch-text: #1a1a1a;
+
+  --bg: var(--sketch-bg);
+  --bg2: #eae3d8;
+  --surface: #fbf9f5;
+  --surface2: #f3efe6;
+  --border: var(--sketch-text);
+  --border-hi: var(--sketch-text);
+  --accent: var(--sketch-text);
+  --accent-bg: #fef08a;
+  --text: var(--sketch-text);
+  --text-dim: #334155;
+  --text-muted: #475569;
+
+  /* Per-category card colors */
+  --cat-organize: #854d0e;   --cat-organize-bg: #fef08a;
+  --cat-convert: #0f766e;    --cat-convert-bg: #99f6e4;
+  --cat-edit: #6b21a8;       --cat-edit-bg: #e9d5ff;
+  --cat-optimize: #166534;   --cat-optimize-bg: #bbf7d0;
+  --cat-security: #9d174d;   --cat-security-bg: #fbcfe8;
 }
 
 html[data-theme="dark"] {
-  --paper: #1a1815;
-  --paper-2: #231f18;
-  --ink: #ece6da;
-  --ink-soft: #988d7d;
-  --line: #37322a;
-  --dot: rgba(255, 248, 235, 0.05);
-  --chrome: #262219;
-  --badge: #0e0c09;
-  --badge-ink: #f0ebdf;
+  --sketch-bg: #131316;
+  --sketch-dot: #252530;
+  --sketch-text: #e8e6e1;
+
+  --bg: var(--sketch-bg);
+  --bg2: #1a1a1f;
+  --surface: #1e1e24;
+  --surface2: #28282f;
+  --border: #3e3e4a;
+  --border-hi: #5a5a6e;
+  --accent: #8ecadb;
+  --accent-bg: #2e2c1a;
+  --text: var(--sketch-text);
+  --text-dim: #cccac3;
+  --text-muted: #9a9890;
+
+  --cat-organize: #dbc07a;   --cat-organize-bg: #2c2210;
+  --cat-convert: #7cccc4;    --cat-convert-bg: #0e2422;
+  --cat-edit: #baa4e0;       --cat-edit-bg: #1e1530;
+  --cat-optimize: #8ccca8;   --cat-optimize-bg: #0e2419;
+  --cat-security: #dba0b8;   --cat-security-bg: #2a1420;
 }
 
+/* ── Base ── */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -30,18 +69,20 @@ html[data-theme="dark"] {
 
 html {
   font-size: 16px;
+  scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  font-family: 'Spectral', Georgia, serif;
-  background-color: var(--paper);
-  color: var(--ink);
-  min-height: 100vh;
-  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+  font-family: var(--font-sans);
+  background: var(--sketch-bg);
+  background-image: radial-gradient(var(--sketch-dot) 1.2px, transparent 1.2px);
   background-size: 20px 20px;
-  transition: background-color 0.3s, color 0.3s;
+  color: var(--sketch-text);
+  min-height: 100vh;
+  overflow-x: hidden;
+  line-height: 1.6;
 }
 
 #root {
@@ -63,7 +104,7 @@ button {
   color: inherit;
 }
 
-input {
+input, select, textarea {
   font-family: inherit;
   border: none;
   background: none;
@@ -72,6 +113,34 @@ input {
 }
 
 ::selection {
-  background: var(--badge);
-  color: var(--badge-ink);
+  background: var(--sketch-text);
+  color: var(--sketch-bg);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--sketch-bg); }
+::-webkit-scrollbar-thumb {
+  background: var(--surface);
+  border: 2px solid var(--sketch-text);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--sketch-dot); }
+
+/* ── Animations ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

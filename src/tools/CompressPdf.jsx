@@ -137,16 +137,16 @@ export default function CompressPdf() {
                 padding: '0.75rem 0'
               }}>
                 <div>
-                  <div style={{ color: 'var(--ink-soft)', marginBottom: '0.25rem' }}>Original</div>
+                  <div style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Original</div>
                   <div style={{ fontWeight: 600 }}>{formatSize(result.originalSize)}</div>
                 </div>
                 <div>
-                  <div style={{ color: 'var(--ink-soft)', marginBottom: '0.25rem' }}>Compressed</div>
+                  <div style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Compressed</div>
                   <div style={{ fontWeight: 600 }}>{formatSize(result.newSize)}</div>
                 </div>
                 <div>
-                  <div style={{ color: 'var(--ink-soft)', marginBottom: '0.25rem' }}>Saved</div>
-                  <div style={{ fontWeight: 600, color: result.saved > 0 ? '#5cb85c' : 'var(--ink-soft)' }}>
+                  <div style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Saved</div>
+                  <div style={{ fontWeight: 600, color: result.saved > 0 ? '#5cb85c' : 'var(--text-muted)' }}>
                     {result.saved > 0 ? `-${result.pct}%` : 'No reduction'}
                   </div>
                 </div>
