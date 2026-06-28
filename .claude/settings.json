@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx bunx:*)",
+      "Bash(npx bun:*)",
+      "Bash(sed -i '' \"s/{'\\\\\\\\\\\\u{1F5DC}\\\\\\\\\\\\uFE0F'}/{'🗜️'}/g\" CompressPdf.jsx)",
+      "Bash(sed -i '' \"s/{'\\\\\\\\\\\\u{1F5C3}\\\\\\\\\\\\uFE0F'}/{'🗃️'}/g\" OrganizePages.jsx)",
+      "Bash(sed -i '' \"s/{'\\\\\\\\\\\\u{1F4A7}'}/{'💧'}/g\" Watermark.jsx)",
+      "Bash(sed -i '' \"s/{'\\\\\\\\\\\\u{1F50D}'}/{'🔍'}/g\" OcrText.jsx)",
+      "Bash(sed -i '' \"s/{'\\\\\\\\\\\\u{1F3DE}\\\\\\\\\\\\uFE0F'}/{'🏞️'}/g\" PdfToImages.jsx)",
+      "Bash(curl -s http://localhost:5173)",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__navigate_page"
+    ],
+    "additionalDirectories": [
+      "/Volumes/ExtDisk/Downloads/pdf-toolkit-web-app/project"
+    ]
+  }
+}
