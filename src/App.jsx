@@ -1,17 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import './App.css';
 
-import MergePdf from './tools/MergePdf';
-import SplitPdf from './tools/SplitPdf';
-import OrganizePages from './tools/OrganizePages';
-import ImagesToPdf from './tools/ImagesToPdf';
-import PdfToImages from './tools/PdfToImages';
-import OcrText from './tools/OcrText';
-import PageNumbers from './tools/PageNumbers';
-import RotatePdf from './tools/RotatePdf';
-import CompressPdf from './tools/CompressPdf';
-import Watermark from './tools/Watermark';
-import PdfEditor from './tools/PdfEditor';
+const MergePdf = lazy(() => import('./tools/MergePdf'));
+const SplitPdf = lazy(() => import('./tools/SplitPdf'));
+const OrganizePages = lazy(() => import('./tools/OrganizePages'));
+const ImagesToPdf = lazy(() => import('./tools/ImagesToPdf'));
+const PdfToImages = lazy(() => import('./tools/PdfToImages'));
+const OcrText = lazy(() => import('./tools/OcrText'));
+const PageNumbers = lazy(() => import('./tools/PageNumbers'));
+const RotatePdf = lazy(() => import('./tools/RotatePdf'));
+const CompressPdf = lazy(() => import('./tools/CompressPdf'));
+const Watermark = lazy(() => import('./tools/Watermark'));
+const PdfEditor = lazy(() => import('./tools/PdfEditor'));
 
 const TOOLS = [
   { id: 'merge', title: 'Merge PDF', icon: '📑', cat: 'organize', desc: 'Combine several PDFs into one — drag to reorder.' },
@@ -70,7 +70,12 @@ function App() {
       return JSON.parse(localStorage.getItem('pdf-toolkit-favs') || '[]');
     } catch { return []; }
   });
-  const [openTool, setOpenTool] = useState(null);
+  const [openTool, setOpenTool] = useState(() => {
+    const active = localStorage.getItem('pdf-toolkit-active-tool');
+    if (active) return active;
+    if (localStorage.getItem('pdf_editor_current_page')) return 'editor';
+    return null;
+  });
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
@@ -80,6 +85,14 @@ function App() {
   useEffect(() => {
     localStorage.setItem('pdf-toolkit-favs', JSON.stringify(favorites));
   }, [favorites]);
+
+  useEffect(() => {
+    if (openTool) {
+      localStorage.setItem('pdf-toolkit-active-tool', openTool);
+    } else {
+      localStorage.removeItem('pdf-toolkit-active-tool');
+    }
+  }, [openTool]);
 
   const toggleFav = useCallback((id, e) => {
     e.stopPropagation();
@@ -120,22 +133,43 @@ function App() {
             </button>
           </div>
         </header>
-        {openTool === 'editor' ? (
-          <ToolComponent onBack={() => setOpenTool(null)} tool={tool} />
-        ) : (
-          <div className="main-content">
-            <div className="workspace">
-              <div className="ws-header">
-                <span className="ws-emoji">{tool.icon}</span>
-                <div className="ws-info">
-                  <h2>{tool.title}</h2>
-                  <p>{tool.desc}</p>
-                </div>
-              </div>
-              <ToolComponent onBack={() => setOpenTool(null)} />
-            </div>
+        <Suspense fallback={
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 12 }}>
+            <style dangerouslySetInnerHTML={{ __html: `
+              @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+              }
+            `}} />
+            <div style={{
+              width: 32, height: 32,
+              border: '3px solid var(--border)',
+              borderTopColor: 'var(--cat-edit)',
+              borderRadius: '50%',
+              animation: 'spin 0.8s linear infinite'
+            }} />
+            <span style={{ fontSize: 11, fontFamily: 'var(--font-sans)', color: 'var(--text-muted)', fontWeight: 500 }}>
+              Loading {tool.title}...
+            </span>
           </div>
-        )}
+        }>
+          {openTool === 'editor' ? (
+            <ToolComponent onBack={() => setOpenTool(null)} tool={tool} />
+          ) : (
+            <div className="main-content">
+              <div className="workspace">
+                <div className="ws-header">
+                  <span className="ws-emoji">{tool.icon}</span>
+                  <div className="ws-info">
+                    <h2>{tool.title}</h2>
+                    <p>{tool.desc}</p>
+                  </div>
+                </div>
+                <ToolComponent onBack={() => setOpenTool(null)} />
+              </div>
+            </div>
+          )}
+        </Suspense>
         <footer className="footer">
           runs 100% in your browser · powered by pdf-lib · pdf.js · tesseract.js
         </footer>

@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { PDFDocument, rgb, StandardFonts, degrees } from 'pdf-lib';
 import { saveAs } from 'file-saver';
 import { formatSize } from '../App';
+import { savePDFToDB, loadPDFFromDB, clearPDFFromDB } from './PdfEditorDB';
+import PdfEditorTextOverlay from './PdfEditorTextOverlay';
 
 /* ================================================================
    PDF.js dynamic loader
@@ -172,7 +174,7 @@ const S = {
 
   /* Right panel */
   rightPanel: (visible) => ({
-    width: visible ? 200 : 0, flexShrink: 0,
+    width: visible ? 240 : 0, flexShrink: 0,
     background: 'var(--surface)',
     borderLeft: visible ? '1px solid var(--border)' : 'none',
     display: 'flex', flexDirection: 'column',
@@ -180,37 +182,42 @@ const S = {
     overflow: 'hidden',
   }),
   panelSection: {
-    padding: '10px 10px', borderBottom: '1px solid var(--border)',
+    padding: '14px 14px', borderBottom: '1px solid var(--border)',
   },
   panelTitle: {
-    fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: 10,
+    fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: 11,
     color: 'var(--text-muted)', textTransform: 'uppercase',
-    letterSpacing: '0.06em', marginBottom: 6,
+    letterSpacing: '0.06em', marginBottom: 10,
   },
-  layerItem: (selected) => ({
-    display: 'flex', alignItems: 'center', gap: 5, padding: '4px 5px',
-    borderRadius: 4, cursor: 'pointer', fontSize: 10,
+  layerItem: (selected, dragOver) => ({
+    display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+    borderRadius: 6, cursor: 'grab', fontSize: 12,
     fontFamily: 'var(--font-sans)',
-    background: selected ? 'var(--cat-edit-bg)' : 'transparent',
+    background: selected ? 'var(--cat-edit-bg)' : dragOver ? 'rgba(107, 33, 168, 0.08)' : 'transparent',
+    borderTop: dragOver ? '2px solid var(--cat-edit)' : '2px solid transparent',
+    borderBottom: '2px solid transparent',
     color: selected ? 'var(--cat-edit)' : 'var(--sketch-text)',
-    transition: 'all 0.08s', marginBottom: 1,
+    transition: 'all 0.12s ease', marginBottom: 3,
+    userSelect: 'none',
   }),
   layerIcon: {
-    width: 16, height: 16,
+    width: 18, height: 18,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: 9, fontWeight: 700, flexShrink: 0,
+    fontSize: 12, fontWeight: 700, flexShrink: 0,
+    color: 'var(--sketch-text)',
   },
   layerDot: (c) => ({
-    width: 7, height: 7, borderRadius: '50%',
+    width: 9, height: 9, borderRadius: '50%',
     background: c, border: '1px solid var(--border)', flexShrink: 0,
   }),
   layerName: {
     flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    fontSize: 10,
+    fontSize: 12,
+    fontWeight: 500,
   },
   layerDel: {
     background: 'none', border: 'none', color: 'var(--text-muted)',
-    cursor: 'pointer', fontSize: 11, padding: '0 2px', lineHeight: 1,
+    cursor: 'pointer', fontSize: 16, padding: '0 4px', lineHeight: 1,
     boxShadow: 'none', opacity: 0.5, transition: 'opacity 0.1s',
   },
 
@@ -336,6 +343,55 @@ function hexToRgb(hex) {
   return rgb(r / 255, g / 255, b / 255);
 }
 
+function parseRichText(text) {
+  const segments = [];
+  let currentText = '';
+  let isBold = false;
+  let isItalic = false;
+
+  let i = 0;
+  while (i < text.length) {
+    if (text.substring(i, i + 3) === '<b>') {
+      if (currentText) {
+        segments.push({ text: currentText, bold: isBold, italic: isItalic });
+        currentText = '';
+      }
+      isBold = true;
+      i += 3;
+    } else if (text.substring(i, i + 4) === '</b>') {
+      if (currentText) {
+        segments.push({ text: currentText, bold: isBold, italic: isItalic });
+        currentText = '';
+      }
+      isBold = false;
+      i += 4;
+    } else if (text.substring(i, i + 3) === '<i>') {
+      if (currentText) {
+        segments.push({ text: currentText, bold: isBold, italic: isItalic });
+        currentText = '';
+      }
+      isItalic = true;
+      i += 3;
+    } else if (text.substring(i, i + 4) === '</i>') {
+      if (currentText) {
+        segments.push({ text: currentText, bold: isBold, italic: isItalic });
+        currentText = '';
+      }
+      isItalic = false;
+      i += 4;
+    } else {
+      currentText += text[i];
+      i++;
+    }
+  }
+  if (currentText) {
+    segments.push({ text: currentText, bold: isBold, italic: isItalic });
+  }
+  return segments;
+}
+
+
+
 function clamp(val, min, max) {
   return Math.min(max, Math.max(min, val));
 }
@@ -368,7 +424,7 @@ function getBounds(ann) {
   }
   if (ann.type === 'text') {
     const lines = (ann.text || '').split('\n');
-    const maxLen = Math.max(...lines.map(l => l.length), 1);
+    const maxLen = Math.max(...lines.map(l => l.replace(/<\/?[bi]>/g, '').length), 1);
     const w = maxLen * ann.fontSize * 0.55;
     const lineH = ann.fontSize * 1.25;
     const h = lines.length * lineH;
@@ -472,6 +528,7 @@ export default function PdfEditor({ onBack, tool }) {
   /* Tool state */
   const [activeTool, setActiveTool] = useState('select');
   const [strokeColor, setStrokeColor] = useState('#1a1a1a');
+  const [fillColor, setFillColor] = useState('transparent');
   const [strokeWidth, setStrokeWidth] = useState(3);
   const [textSize, setTextSize] = useState(18);
   const [selectedFont, setSelectedFont] = useState('auto');
@@ -490,6 +547,7 @@ export default function PdfEditor({ onBack, tool }) {
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [resizeDirection, setResizeDirection] = useState(null);
   const resizeStartRef = useRef(null);
+  const [dragOverLayerIdx, setDragOverLayerIdx] = useState(null);
 
   /* Undo/redo */
   const [history, setHistory] = useState([]);
@@ -562,6 +620,19 @@ export default function PdfEditor({ onBack, tool }) {
         const list = [...(prev[currentPage] || [])];
         if (list[selectedIdx]) {
           list[selectedIdx] = { ...list[selectedIdx], color: val };
+        }
+        return { ...prev, [currentPage]: list };
+      });
+    }
+  };
+
+  const setFillColorSync = (val) => {
+    setFillColor(val);
+    if (selectedIdx !== null) {
+      setAnnsH(prev => {
+        const list = [...(prev[currentPage] || [])];
+        if (list[selectedIdx]) {
+          list[selectedIdx] = { ...list[selectedIdx], fillColor: val };
         }
         return { ...prev, [currentPage]: list };
       });
@@ -657,28 +728,42 @@ export default function PdfEditor({ onBack, tool }) {
   /* ================================================================
      File loading
      ================================================================ */
-  const loadFile = async (f) => {
-    if (!f || f.type !== 'application/pdf') return;
-    setFile(f);
+  const loadFile = async (f, savedBytes = null, savedName = null, initialAnns = null, initialPage = null, initialZoom = null) => {
+    let name = savedName;
+    let bytes = savedBytes;
+    if (f) {
+      if (f.type !== 'application/pdf') return;
+      name = f.name;
+    }
+    setFile({ name });
     setLoading(true);
-    setAnnotations({});
-    setCurrentPage(1);
+    setAnnotations(initialAnns || {});
+    setCurrentPage(initialPage || 1);
     setSelectedIdx(null);
     setHistory([]);
     setHistoryIdx(-1);
     setThumbnails({});
+    if (initialZoom) {
+      setZoom(initialZoom);
+    }
     try {
       const pdfjsLib = await getPdfjsLib();
-      const bytes = await f.arrayBuffer();
-      const u8 = new Uint8Array(bytes);
-      pdfBytesRef.current = u8;
-      setPdfBytes(u8);
+      if (!bytes && f) {
+        bytes = new Uint8Array(await f.arrayBuffer());
+      }
+      if (!bytes) return;
+
+      pdfBytesRef.current = bytes;
+      setPdfBytes(bytes);
+      
+      // Save PDF to DB asynchronously
+      savePDFToDB(bytes, name);
       
       const clonedU8 = new Uint8Array(bytes.slice(0));
       const doc = await pdfjsLib.getDocument({ data: clonedU8 }).promise;
       setPdfDoc(doc);
       setTotalPages(doc.numPages);
-      pushHistory({});
+      pushHistory(initialAnns || {});
     } catch (err) {
       alert('Error loading PDF: ' + err.message);
     } finally {
@@ -691,6 +776,48 @@ export default function PdfEditor({ onBack, tool }) {
     setDragOver(false);
     loadFile(e.dataTransfer.files[0]);
   };
+
+  // Restore session from IndexedDB and localStorage on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await loadPDFFromDB();
+        if (saved && saved.bytes && saved.name) {
+          const savedPage = localStorage.getItem('pdf_editor_current_page');
+          const savedAnns = localStorage.getItem('pdf_editor_annotations');
+          const savedZoom = localStorage.getItem('pdf_editor_zoom');
+          
+          let initialPage = 1;
+          if (savedPage) initialPage = parseInt(savedPage, 10);
+          
+          let initialAnns = {};
+          if (savedAnns) {
+            try {
+              initialAnns = JSON.parse(savedAnns);
+            } catch (e) {
+              console.error('Failed to parse saved annotations:', e);
+            }
+          }
+          
+          let initialZoom = 1.0;
+          if (savedZoom) initialZoom = parseFloat(savedZoom);
+          
+          await loadFile(null, saved.bytes, saved.name, initialAnns, initialPage, initialZoom);
+        }
+      } catch (e) {
+        console.error('Error loading saved PDF session:', e);
+      }
+    })();
+  }, []);
+
+  // Auto-save session state to localStorage
+  useEffect(() => {
+    if (pdfDoc) {
+      localStorage.setItem('pdf_editor_annotations', JSON.stringify(annotations));
+      localStorage.setItem('pdf_editor_current_page', currentPage.toString());
+      localStorage.setItem('pdf_editor_zoom', zoom.toString());
+    }
+  }, [annotations, currentPage, zoom, pdfDoc]);
 
   /* ================================================================
      Render PDF page
@@ -938,6 +1065,19 @@ export default function PdfEditor({ onBack, tool }) {
     setSelectedIdx(idx - 1);
   }, [currentPage, setAnnsH]);
 
+  const reorderLayers = useCallback((dragIdx, targetIdx) => {
+    if (dragIdx === targetIdx) return;
+    setAnnsH(prev => {
+      const list = [...(prev[currentPage] || [])];
+      const [removed] = list.splice(dragIdx, 1);
+      list.splice(targetIdx, 0, removed);
+      const nextState = { ...prev, [currentPage]: list };
+      pushHistory(nextState);
+      return nextState;
+    });
+    setSelectedIdx(targetIdx);
+  }, [currentPage, setAnnsH, pushHistory]);
+
   /* ================================================================
      Overlay drawing
      ================================================================ */
@@ -990,11 +1130,23 @@ export default function PdfEditor({ onBack, tool }) {
         ctx.stroke();
         ctx.globalAlpha = 1;
       } else if (ann.type === 'rect') {
+        if (ann.fillColor && ann.fillColor !== 'transparent') {
+          ctx.save();
+          ctx.fillStyle = ann.fillColor;
+          ctx.fillRect(ann.x, ann.y, ann.w, ann.h);
+          ctx.restore();
+        }
         ctx.strokeRect(ann.x, ann.y, ann.w, ann.h);
       } else if (ann.type === 'circle') {
         const rx = Math.abs(ann.w) / 2, ry = Math.abs(ann.h) / 2;
         ctx.beginPath();
         ctx.ellipse(ann.x + ann.w / 2, ann.y + ann.h / 2, rx || 1, ry || 1, 0, 0, Math.PI * 2);
+        if (ann.fillColor && ann.fillColor !== 'transparent') {
+          ctx.save();
+          ctx.fillStyle = ann.fillColor;
+          ctx.fill();
+          ctx.restore();
+        }
         ctx.stroke();
       } else if (ann.type === 'line') {
         ctx.beginPath();
@@ -1020,15 +1172,22 @@ export default function PdfEditor({ onBack, tool }) {
           ctx.fillRect(ann.whiteout.x, ann.whiteout.y, ann.whiteout.w, ann.whiteout.h);
           ctx.restore();
         }
-        const wt = ann.fontWeight || 400;
-        const st = ann.fontStyle === 'italic' ? 'italic ' : '';
         const ff = ann.fontFamily || '"Times New Roman", serif';
-        ctx.font = `${st}${wt} ${ann.fontSize}px ${ff}`;
         ctx.fillStyle = ann.color;
         const lines = (ann.text || '').split('\n');
         const lh = ann.fontSize * 1.25;
         lines.forEach((line, li) => {
-          ctx.fillText(line, ann.x, ann.y + li * lh);
+          const segments = parseRichText(line);
+          let currentX = ann.x;
+          segments.forEach(seg => {
+            const isBold = seg.bold || (ann.fontWeight >= 700);
+            const isItalic = seg.italic || (ann.fontStyle === 'italic');
+            const s = isItalic ? 'italic ' : '';
+            const w = isBold ? 700 : 400;
+            ctx.font = `${s}${w} ${ann.fontSize}px ${ff}`;
+            ctx.fillText(seg.text, currentX, ann.y + li * lh);
+            currentX += ctx.measureText(seg.text).width;
+          });
         });
       }
       ctx.restore();
@@ -1123,11 +1282,25 @@ export default function PdfEditor({ onBack, tool }) {
       ctx.lineWidth = strokeWidth;
       ctx.setLineDash([5, 3]);
       if (shapePreview.type === 'rect') {
+        if (fillColor && fillColor !== 'transparent') {
+          ctx.save();
+          ctx.fillStyle = fillColor;
+          ctx.globalAlpha = 0.4;
+          ctx.fillRect(shapePreview.x, shapePreview.y, shapePreview.w, shapePreview.h);
+          ctx.restore();
+        }
         ctx.strokeRect(shapePreview.x, shapePreview.y, shapePreview.w, shapePreview.h);
       } else if (shapePreview.type === 'circle') {
         const rx = Math.abs(shapePreview.w) / 2, ry = Math.abs(shapePreview.h) / 2;
         ctx.beginPath();
         ctx.ellipse(shapePreview.x + shapePreview.w / 2, shapePreview.y + shapePreview.h / 2, rx || 1, ry || 1, 0, 0, Math.PI * 2);
+        if (fillColor && fillColor !== 'transparent') {
+          ctx.save();
+          ctx.fillStyle = fillColor;
+          ctx.globalAlpha = 0.4;
+          ctx.fill();
+          ctx.restore();
+        }
         ctx.stroke();
       } else if (shapePreview.type === 'line' || shapePreview.type === 'arrow') {
         ctx.beginPath();
@@ -1519,7 +1692,12 @@ export default function PdfEditor({ onBack, tool }) {
       const sw = activeTool === 'highlight' ? Math.max(strokeWidth, 18) : strokeWidth;
       addAnn({ type: activeTool === 'highlight' ? 'highlight' : 'path', points: currentPath, color: strokeColor, strokeWidth: sw });
     } else if (['rect', 'circle', 'line', 'arrow'].includes(activeTool) && shapePreview) {
-      addAnn({ ...shapePreview, color: strokeColor, strokeWidth });
+      addAnn({
+        ...shapePreview,
+        color: strokeColor,
+        strokeWidth,
+        fillColor: ['rect', 'circle'].includes(activeTool) ? fillColor : undefined
+      });
     }
 
     setIsDrawing(false);
@@ -1527,7 +1705,42 @@ export default function PdfEditor({ onBack, tool }) {
     setShapeStart(null);
     setShapePreview(null);
   }, [isPanning, draggingIdx, isDrawing, activeTool, currentPath, shapePreview,
-      strokeColor, strokeWidth, addAnn, pushHistory]);
+      strokeColor, fillColor, strokeWidth, addAnn, pushHistory]);
+
+  const handleEditorFormat = (tag) => {
+    const el = textInputRef.current;
+    if (el) {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      if (start !== end) {
+        const text = el.value;
+        const selectedText = text.substring(start, end);
+        const openTag = `<${tag}>`;
+        const closeTag = `</${tag}>`;
+        
+        let newSelectedText;
+        if (selectedText.startsWith(openTag) && selectedText.endsWith(closeTag)) {
+          newSelectedText = selectedText.substring(openTag.length, selectedText.length - closeTag.length);
+        } else {
+          newSelectedText = `${openTag}${selectedText}${closeTag}`;
+        }
+        
+        const newValue = text.substring(0, start) + newSelectedText + text.substring(end);
+        
+        setEditingText(prev => ({ ...prev, value: newValue }));
+        
+        // Restore focus and selection range
+        requestAnimationFrame(() => {
+          if (el) {
+            el.focus();
+            el.setSelectionRange(start, start + newSelectedText.length);
+          }
+        });
+        return true;
+      }
+    }
+    return false;
+  };
 
   /* Commit text editing */
   const commitText = useCallback((value) => {
@@ -1626,6 +1839,26 @@ export default function PdfEditor({ onBack, tool }) {
     }
     setEditingText(null);
   }, [editingText, updateAnn, deleteAnn, addAnn, strokeColor, textSize, selectedFont]);
+
+  const handleClearWorkspace = async () => {
+    const confirm = window.confirm("Are you sure you want to clear all annotations, remove this PDF, and start fresh with a new one?");
+    if (confirm) {
+      await clearPDFFromDB();
+      localStorage.removeItem('pdf_editor_annotations');
+      localStorage.removeItem('pdf_editor_current_page');
+      localStorage.removeItem('pdf_editor_zoom');
+      
+      setFile(null);
+      setPdfDoc(null);
+      setAnnotations({});
+      setHistory([{}]);
+      setHistoryIdx(0);
+      setPdfBytes(null);
+      setThumbnails({});
+      setSelectedIdx(null);
+      setEditingText(null);
+    }
+  };
 
   /* Double click to re-edit text */
   const handleDoubleClick = useCallback((e) => {
@@ -1854,12 +2087,50 @@ export default function PdfEditor({ onBack, tool }) {
             const lh = ann.fontSize * 1.25;
             lines.forEach((line, li) => {
               if (line.trim()) {
-                page.drawText(line, {
-                  x: ann.x * sx,
-                  y: height - (ann.y + li * lh) * sy,
-                  size: ann.fontSize * sy,
-                  font: useFont, color,
-                  rotate: rot,
+                const segments = parseRichText(line);
+                let dx = 0;
+                const theta = ann.rotation ? -ann.rotation : 0;
+                const cosT = Math.cos(theta);
+                const sinT = Math.sin(theta);
+                const startX = ann.x * sx;
+                const startY = height - (ann.y + li * lh) * sy;
+
+                segments.forEach(seg => {
+                  const finalBold = seg.bold || (ann.fontWeight >= 700);
+                  const finalItalic = seg.italic || (ann.fontStyle === 'italic');
+                  
+                  let segFont;
+                  if (isMono) {
+                    if (finalBold && finalItalic) segFont = monoBoldItalic;
+                    else if (finalBold) segFont = monoBold;
+                    else if (finalItalic) segFont = monoItalic;
+                    else segFont = monoFont;
+                  } else if (isSerif) {
+                    if (finalBold && finalItalic) segFont = serifBoldItalic;
+                    else if (finalBold) segFont = serifBold;
+                    else if (finalItalic) segFont = serifItalic;
+                    else segFont = serifFont;
+                  } else {
+                    if (finalBold && finalItalic) segFont = sansBoldItalic;
+                    else if (finalBold) segFont = sansBold;
+                    else if (finalItalic) segFont = sansItalic;
+                    else segFont = sansFont;
+                  }
+                  
+                  const drawSize = ann.fontSize * sy;
+                  const px = startX + dx * cosT;
+                  const py = startY + dx * sinT;
+
+                  page.drawText(seg.text, {
+                    x: px,
+                    y: py,
+                    size: drawSize,
+                    font: segFont,
+                    color,
+                    rotate: rot,
+                  });
+                  
+                  dx += segFont.widthOfTextAtSize(seg.text, drawSize);
                 });
               }
             });
@@ -1882,19 +2153,23 @@ export default function PdfEditor({ onBack, tool }) {
           } else if (ann.type === 'rect') {
             const rx = ann.w >= 0 ? ann.x * sx : (ann.x + ann.w) * sx;
             const ry = ann.h >= 0 ? height - (ann.y + ann.h) * sy : height - ann.y * sy;
+            const fillCol = ann.fillColor && ann.fillColor !== 'transparent' ? hexToRgb(ann.fillColor) : undefined;
             page.drawRectangle({
               x: rx, y: ry,
               width: Math.abs(ann.w) * sx, height: Math.abs(ann.h) * sy,
               borderColor: color, borderWidth: sw,
+              color: fillCol,
               rotate: rot,
             });
           } else if (ann.type === 'circle') {
+            const fillCol = ann.fillColor && ann.fillColor !== 'transparent' ? hexToRgb(ann.fillColor) : undefined;
             page.drawEllipse({
               x: (ann.x + ann.w / 2) * sx,
               y: height - (ann.y + ann.h / 2) * sy,
               xScale: Math.abs(ann.w) / 2 * sx || 1,
               yScale: Math.abs(ann.h) / 2 * sy || 1,
               borderColor: color, borderWidth: sw,
+              color: fillCol,
               rotate: rot,
             });
           } else if (ann.type === 'line' || ann.type === 'arrow') {
@@ -2092,7 +2367,7 @@ export default function PdfEditor({ onBack, tool }) {
 
           <div style={{ ...S.toolDivider, width: toolStripWidth > 85 ? '85%' : 22 }} />
 
-          {/* Figma-style custom color picker */}
+          {/* Figma-style Border (Stroke) Color picker */}
           <div style={{
             display: 'flex',
             flexDirection: toolStripWidth > 85 ? 'row' : 'column',
@@ -2102,7 +2377,7 @@ export default function PdfEditor({ onBack, tool }) {
             padding: '0 4px',
             width: '100%',
           }}>
-            {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>COLOR</span>}
+            {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>BORDER</span>}
             <div style={{
               display: 'flex',
               alignItems: 'center',
@@ -2114,7 +2389,7 @@ export default function PdfEditor({ onBack, tool }) {
               cursor: 'pointer',
               position: 'relative',
               boxShadow: toolStripWidth > 85 ? 'inset 0 1px 2px rgba(0,0,0,0.04)' : 'none',
-            }} title="Select Custom Color">
+            }} title="Select Border (Stroke) Color">
               {/* Color Circle */}
               <div style={{
                 width: 16, height: 16,
@@ -2157,6 +2432,88 @@ export default function PdfEditor({ onBack, tool }) {
               />
             </div>
           </div>
+
+          {/* Figma-style Fill Color picker (for shape tools or selected shapes) */}
+          {((['rect', 'circle'].includes(activeTool)) || (selectedIdx !== null && pageAnns[selectedIdx] && ['rect', 'circle'].includes(pageAnns[selectedIdx].type))) && (
+            <div style={{
+              display: 'flex',
+              flexDirection: toolStripWidth > 85 ? 'row' : 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              padding: '0 4px',
+              width: '100%',
+              marginTop: 4,
+            }}>
+              {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>FILL</span>}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                background: toolStripWidth > 85 ? 'var(--bg2)' : 'transparent',
+                padding: toolStripWidth > 85 ? '3px 6px' : 0,
+                borderRadius: 6,
+                border: toolStripWidth > 85 ? '1px solid var(--border)' : 'none',
+                cursor: 'pointer',
+                position: 'relative',
+                boxShadow: toolStripWidth > 85 ? 'inset 0 1px 2px rgba(0,0,0,0.04)' : 'none',
+              }} title="Select Fill Color (Double click to toggle transparent)">
+                <div style={{
+                  width: 16, height: 16,
+                  borderRadius: '50%',
+                  background: fillColor === 'transparent' ? 'linear-gradient(135deg, #fff 45%, #ff3b30 45%, #ff3b30 55%, #fff 55%)' : fillColor,
+                  border: '1.5px solid var(--border)',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                  flexShrink: 0,
+                }} onClick={(e) => {
+                  if (fillColor !== 'transparent' && e.detail === 2) {
+                    setFillColorSync('transparent');
+                  }
+                }} />
+                
+                {/* Hex Code Input (Visible only if wide) */}
+                {toolStripWidth > 85 && (
+                  <span style={{
+                    fontSize: 10,
+                    fontFamily: 'var(--font-mono)',
+                    color: 'var(--sketch-text)',
+                    textTransform: 'uppercase',
+                    userSelect: 'none',
+                    letterSpacing: '0.02em',
+                  }}>
+                    {fillColor === 'transparent' ? 'NONE' : fillColor}
+                  </span>
+                )}
+
+                {/* Hidden native Color Picker */}
+                <input
+                  type="color"
+                  value={fillColor.startsWith('#') ? fillColor : '#ffffff'}
+                  onChange={e => {
+                    setFillColorSync(e.target.value);
+                  }}
+                  style={{
+                    position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                    border: 'none', padding: 0, opacity: 0, cursor: 'pointer',
+                  }}
+                />
+              </div>
+              <button
+                onClick={() => setFillColorSync(fillColor === 'transparent' ? '#ffffff' : 'transparent')}
+                style={{
+                  background: 'none', border: '1px solid var(--border)',
+                  borderRadius: 4, padding: '2px 4px', fontSize: 8, cursor: 'pointer',
+                  color: 'var(--sketch-text)',
+                  width: toolStripWidth > 85 ? 'auto' : 22,
+                  height: 18,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}
+                title={fillColor === 'transparent' ? "Set solid fill" : "Set no fill"}
+              >
+                {fillColor === 'transparent' ? "Solid" : "None"}
+              </button>
+            </div>
+          )}
 
           {['draw', 'highlight', 'rect', 'circle', 'line', 'arrow'].includes(activeTool) && (
             <>
@@ -2347,291 +2704,23 @@ export default function PdfEditor({ onBack, tool }) {
                 onContextMenu={handleContextMenu} />
 
               {/* Inline text editor */}
-              {editingText && (() => {
-                const isPdfText = !!editingText.pdfTextItem;
-                const fs = editingText.matchedFontSize || textSize;
-                const lineW = isPdfText ? editingText.pdfTextItem.width + 8 : undefined;
-                const resolvedFontCSS = selectedFont === 'auto'
-                  ? (editingText.matchedFont || '"Times New Roman", serif')
-                  : (FONT_OPTIONS.find(f => f.id === selectedFont)?.css || '"Times New Roman", serif');
-                const floatingBarY = editingText.y - fs - 42;
-                return (
-                <>
-                  {/* Floating formatting bar */}
-                  <div
-                    className="formatting-bar"
-                    onPointerDown={() => { isInteractingWithToolbarRef.current = true; }}
-                    onPointerUp={() => { setTimeout(() => { isInteractingWithToolbarRef.current = false; }, 100); }}
-                    style={{
-                      position: 'absolute',
-                      left: editingText.x,
-                      top: floatingBarY,
-                      zIndex: 101,
-                      display: 'flex',
-                      gap: 5,
-                      background: 'var(--surface)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 6,
-                      padding: '4px 6px',
-                      boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
-                      alignItems: 'center',
-                      pointerEvents: 'auto',
-                    }}>
-                    {/* Font family */}
-                    <select
-                      value={selectedFont}
-                      onChange={e => setSelectedFont(e.target.value)}
-                      style={{
-                        fontSize: 9, padding: '2px 4px',
-                        border: '1px solid var(--border)', borderRadius: 4,
-                        background: 'var(--bg2)', color: 'var(--sketch-text)',
-                        fontFamily: 'var(--font-sans)', cursor: 'pointer',
-                        width: 72, textOverflow: 'ellipsis',
-                      }}
-                    >
-                      {FONT_OPTIONS.map(f => {
-                        let label = f.label;
-                        if (f.id === 'auto') {
-                          const resolved = editingText.matchedFont || '"Times New Roman", serif';
-                          const isSerif = /times|georgia|garamond|palatino|serif/i.test(resolved) && !/sans/i.test(resolved);
-                          const isMono = /courier|mono/i.test(resolved);
-                          const displayFamily = isMono ? 'Mono' : (isSerif ? 'Serif' : 'Sans');
-                          label = `Auto (${displayFamily})`;
-                        }
-                        return (
-                          <option key={f.id} value={f.id}>
-                            {label}
-                          </option>
-                        );
-                      })}
-                    </select>
-
-                    {/* Font size adjustment */}
-                    <button
-                      onClick={() => {
-                        const cur = editingText.matchedFontSize || textSize;
-                        const next = Math.max(8, cur - 1);
-                        setEditingText(prev => ({ ...prev, matchedFontSize: next }));
-                        setTextSize(next);
-                      }}
-                      style={{ border: 'none', background: 'none', fontSize: 11, cursor: 'pointer', color: 'var(--sketch-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: 3 }}
-                      onMouseEnter={e => e.target.style.background = 'var(--bg2)'}
-                      onMouseLeave={e => e.target.style.background = 'none'}
-                    >
-                      A-
-                    </button>
-                    <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', minWidth: 16, textAlign: 'center', color: 'var(--sketch-text)' }}>
-                      {editingText.matchedFontSize || textSize}
-                    </span>
-                    <button
-                      onClick={() => {
-                        const cur = editingText.matchedFontSize || textSize;
-                        const next = Math.min(72, cur + 1);
-                        setEditingText(prev => ({ ...prev, matchedFontSize: next }));
-                        setTextSize(next);
-                      }}
-                      style={{ border: 'none', background: 'none', fontSize: 11, cursor: 'pointer', color: 'var(--sketch-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: 3 }}
-                      onMouseEnter={e => e.target.style.background = 'var(--bg2)'}
-                      onMouseLeave={e => e.target.style.background = 'none'}
-                    >
-                      A+
-                    </button>
-
-                    <div style={{ width: 1, height: 12, background: 'var(--border)' }} />
-
-                    {/* Bold Toggle */}
-                    <button
-                      onClick={() => {
-                        setEditingText(prev => ({ ...prev, matchedBold: !prev.matchedBold }));
-                      }}
-                      style={{
-                        width: 18, height: 18, borderRadius: 3, border: 'none',
-                        background: editingText.matchedBold ? 'var(--cat-edit-bg)' : 'none',
-                        color: editingText.matchedBold ? 'var(--cat-edit)' : 'var(--sketch-text)',
-                        fontWeight: 'bold', fontSize: 10, cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center'
-                      }}
-                    >
-                      B
-                    </button>
-
-                    {/* Italic Toggle */}
-                    <button
-                      onClick={() => {
-                        setEditingText(prev => ({ ...prev, matchedItalic: !prev.matchedItalic }));
-                      }}
-                      style={{
-                        width: 18, height: 18, borderRadius: 3, border: 'none',
-                        background: editingText.matchedItalic ? 'var(--cat-edit-bg)' : 'none',
-                        color: editingText.matchedItalic ? 'var(--cat-edit)' : 'var(--sketch-text)',
-                        fontStyle: 'italic', fontSize: 10, cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center'
-                      }}
-                    >
-                      I
-                    </button>
-
-                    <div style={{ width: 1, height: 12, background: 'var(--border)' }} />
-
-                    {/* Color indicator / selector */}
-                    <div style={{
-                      position: 'relative',
-                      width: 14, height: 14,
-                      borderRadius: '50%',
-                      border: '1px solid var(--border)',
-                      background: editingText.matchedColor || strokeColor,
-                      cursor: 'pointer',
-                    }} title="Text Color">
-                      <input
-                        type="color"
-                        value={editingText.matchedColor || strokeColor}
-                        onChange={e => {
-                          const val = e.target.value;
-                          setEditingText(prev => ({ ...prev, matchedColor: val }));
-                          setStrokeColor(val);
-                        }}
-                        style={{
-                          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-                          border: 'none', padding: 0, opacity: 0, cursor: 'pointer',
-                        }}
-                      />
-                    </div>
-
-                    <div style={{ width: 1, height: 12, background: 'var(--border)' }} />
-
-                    {/* Save Button */}
-                    <button
-                      onClick={() => {
-                        commitText();
-                      }}
-                      style={{
-                        border: 'none', background: 'var(--cat-edit)', color: '#fff',
-                        borderRadius: 3, fontSize: 8, padding: '2px 5px', fontWeight: 600,
-                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2,
-                      }}
-                    >
-                      ✓ Save
-                    </button>
-                  </div>
-
-                <textarea
-                  ref={el => {
-                    textInputRef.current = el;
-                    if (el && editingText?.clickX != null) {
-                      // Estimate cursor position from click X coordinate
-                      const text = editingText.value || '';
-                      if (text.length > 0) {
-                        const relX = editingText.clickX - editingText.x;
-                        const isBold = editingText.matchedBold;
-                        // Measure character widths using a temporary canvas
-                        const mc = document.createElement('canvas').getContext('2d');
-                        const wt = isBold ? 700 : 400;
-                        const st = editingText.matchedItalic ? 'italic ' : '';
-                        mc.font = `${st}${wt} ${fs}px ${resolvedFontCSS}`;
-                        let cursorIdx = text.length;
-                        for (let i = 0; i < text.length; i++) {
-                          const w = mc.measureText(text.substring(0, i + 1)).width;
-                          const prevW = i > 0 ? mc.measureText(text.substring(0, i)).width : 0;
-                          const charMid = prevW + (w - prevW) / 2;
-                          if (relX < charMid) {
-                            cursorIdx = i;
-                            break;
-                          }
-                        }
-                        const savedClickX = editingText.clickX;
-                        // Clear clickX so re-renders don't reset cursor
-                        editingText.clickX = null;
-                        // Use requestAnimationFrame to set cursor after React renders
-                        requestAnimationFrame(() => {
-                          if (el && el === textInputRef.current) {
-                            el.setSelectionRange(cursorIdx, cursorIdx);
-                            // For PDF text with nowrap, scroll textarea to show cursor
-                            if (isPdfText) {
-                              const cursorPixelX = mc.measureText(text.substring(0, cursorIdx)).width;
-                              const visibleW = el.clientWidth;
-                              // Center cursor in visible area
-                              el.scrollLeft = Math.max(0, cursorPixelX - visibleW / 2);
-                            }
-                          }
-                        });
-                      } else {
-                        editingText.clickX = null;
-                      }
-                    }
-                  }}
-                  key={`te-${editingText.x}-${editingText.y}-${editingText.editIdx}`}
-                  autoFocus
-                  defaultValue={editingText.value || ''}
-                  placeholder="Type..."
-                  rows={1}
-                  style={{
-                    position: 'absolute',
-                    left: editingText.x,
-                    top: editingText.y - fs,
-                    fontSize: fs,
-                    fontFamily: resolvedFontCSS,
-                    fontWeight: editingText.matchedBold ? 700 : 400,
-                    fontStyle: editingText.matchedItalic ? 'italic' : 'normal',
-                    color: editingText.matchedColor
-                      || (editingText.editIdx != null ? pageAnns[editingText.editIdx]?.color : null)
-                      || strokeColor,
-                    background: isPdfText ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.06)',
-                    border: 'none',
-                    borderBottom: '2px solid var(--cat-edit)',
-                    borderRadius: 0,
-                    padding: '2px 3px',
-                    outline: 'none',
-                    // PDF text: fixed line width, no wrap; New text: auto-grow
-                    width: isPdfText ? Math.min(lineW, pageSize.width - editingText.x - 4) : undefined,
-                    minWidth: isPdfText ? undefined : 60,
-                    maxWidth: pageSize.width - editingText.x - 4,
-                    resize: 'none',
-                    overflowX: isPdfText ? 'auto' : 'hidden',
-                    overflowY: 'hidden',
-                    lineHeight: 1.25, zIndex: 100,
-                    caretColor: 'var(--cat-edit)',
-                    whiteSpace: isPdfText ? 'nowrap' : 'pre-wrap',
-                    wordBreak: isPdfText ? 'normal' : 'break-word',
-                    // PDF text: fixed single-line height
-                    height: isPdfText ? Math.round(fs * 1.25 + 8) : undefined,
-                    boxShadow: isPdfText
-                      ? '0 0 0 1px rgba(106,76,147,0.2), 0 2px 8px rgba(0,0,0,0.08)'
-                      : 'none',
-                    pointerEvents: 'auto',
-                  }}
-                  onInput={e => {
-                    if (!isPdfText) {
-                      // New text: auto-grow height and width
-                      e.target.style.height = 'auto';
-                      e.target.style.height = e.target.scrollHeight + 'px';
-                      e.target.style.width = 'auto';
-                      e.target.style.width = Math.max(60, Math.min(e.target.scrollWidth + 10, pageSize.width - editingText.x - 4)) + 'px';
-                    }
-                    // PDF text: width stays fixed to original line width
-                  }}
-                  onKeyDown={e => {
-                    e.stopPropagation();
-                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitText(e.target.value); }
-                    if (e.key === 'Escape') { e.preventDefault(); setEditingText(null); setGuides({ h: [], v: [] }); }
-                  }}
-                  onBlur={e => {
-                    const val = e.target.value;
-                    setTimeout(() => {
-                      if (isInteractingWithToolbarRef.current) {
-                        textInputRef.current?.focus();
-                        return;
-                      }
-                      if (document.activeElement !== textInputRef.current) {
-                        commitText(val);
-                      }
-                    }, 150);
-                  }}
-                  onPointerDown={e => e.stopPropagation()}
-                  onClick={e => e.stopPropagation()}
-                />
-                </>
-                );
-              })()}
+              <PdfEditorTextOverlay
+                editingText={editingText}
+                setEditingText={setEditingText}
+                textInputRef={textInputRef}
+                pageSize={pageSize}
+                textSize={textSize}
+                setTextSize={setTextSize}
+                strokeColor={strokeColor}
+                setStrokeColor={setStrokeColor}
+                commitText={commitText}
+                setGuides={setGuides}
+                isInteractingWithToolbarRef={isInteractingWithToolbarRef}
+                handleEditorFormat={handleEditorFormat}
+                FONT_OPTIONS={FONT_OPTIONS}
+                selectedFont={selectedFont}
+                setSelectedFont={setSelectedFont}
+              />
             </div>
           </div>
         </div>
@@ -2657,7 +2746,32 @@ export default function PdfEditor({ onBack, tool }) {
                     {[...pageAnns].reverse().map((ann, ri) => {
                       const idx = pageAnns.length - 1 - ri;
                       return (
-                        <div key={ann.id || idx} style={S.layerItem(selectedIdx === idx)}
+                        <div key={ann.id || idx} style={S.layerItem(selectedIdx === idx, dragOverLayerIdx === idx)}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.effectAllowed = 'move';
+                            e.dataTransfer.setData('text/plain', idx);
+                          }}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                          }}
+                          onDragEnter={() => {
+                            setDragOverLayerIdx(idx);
+                          }}
+                          onDragLeave={() => {
+                            if (dragOverLayerIdx === idx) setDragOverLayerIdx(null);
+                          }}
+                          onDragEnd={() => {
+                            setDragOverLayerIdx(null);
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            setDragOverLayerIdx(null);
+                            const dragIdx = Number(e.dataTransfer.getData('text/plain'));
+                            if (!isNaN(dragIdx)) {
+                              reorderLayers(dragIdx, idx);
+                            }
+                          }}
                           onClick={() => {
                             setSelectedIdx(idx);
                             setActiveTool('select');
@@ -2700,31 +2814,267 @@ export default function PdfEditor({ onBack, tool }) {
               {selectedIdx !== null && pageAnns[selectedIdx] && (
                 <div style={S.panelSection}>
                   <div style={S.panelTitle}>Properties</div>
-                  <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', lineHeight: 1.8 }}>
-                    {(() => {
-                      const ann = pageAnns[selectedIdx];
-                      const b = getBounds(ann);
-                      return (
-                        <>
-                          <div>type: {TYPE_LABELS[ann.type] || ann.type}</div>
-                          <div>x: {Math.round(b.x)} y: {Math.round(b.y)}</div>
-                          <div>w: {Math.round(b.w)} h: {Math.round(b.h)}</div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            color: <span style={{ ...S.layerDot(ann.color), display: 'inline-block' }} /> {ann.color}
+                  {(() => {
+                    const ann = pageAnns[selectedIdx];
+                    const b = getBounds(ann);
+                    const angleDeg = Math.round((ann.rotation || 0) * 180 / Math.PI) || 0;
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontFamily: 'var(--font-sans)', color: 'var(--sketch-text)' }}>
+                        {/* Type Badge */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+                          <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Layer Type</span>
+                          <span style={{
+                            background: 'var(--cat-edit-bg)', color: 'var(--cat-edit)',
+                            padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                            textTransform: 'uppercase', letterSpacing: '0.02em'
+                          }}>
+                            {TYPE_LABELS[ann.type] || ann.type}
+                          </span>
+                        </div>
+
+                        {/* Coordinates Grid */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>Position X</span>
+                            <div style={{ background: 'var(--surface-hover)', border: '1px solid var(--border)', padding: '6px 8px', borderRadius: 4, fontSize: 12, fontWeight: 500 }}>
+                              {Math.round(b.x)}px
+                            </div>
                           </div>
-                        </>
-                      );
-                    })()}
-                  </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>Position Y</span>
+                            <div style={{ background: 'var(--surface-hover)', border: '1px solid var(--border)', padding: '6px 8px', borderRadius: 4, fontSize: 12, fontWeight: 500 }}>
+                              {Math.round(b.y)}px
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Size Grid */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>Width</span>
+                            <div style={{ background: 'var(--surface-hover)', border: '1px solid var(--border)', padding: '6px 8px', borderRadius: 4, fontSize: 12, fontWeight: 500 }}>
+                              {Math.round(b.w)}px
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>Height</span>
+                            <div style={{ background: 'var(--surface-hover)', border: '1px solid var(--border)', padding: '6px 8px', borderRadius: 4, fontSize: 12, fontWeight: 500 }}>
+                              {Math.round(b.h)}px
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Type-Specific Editable Properties */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, position: 'relative' }}>
+                          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>
+                            {ann.type === 'text' ? 'Text Color' : 'Border/Stroke Color'}
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--surface-hover)', border: '1px solid var(--border)', padding: '6px 8px', borderRadius: 4, fontSize: 12, fontWeight: 500, cursor: 'pointer', position: 'relative' }}>
+                            <span style={{ ...S.layerDot(ann.color), border: '1px solid rgba(0,0,0,0.1)' }} />
+                            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)' }}>{ann.color}</span>
+                            <input
+                              type="color"
+                              value={ann.color.startsWith('#') ? ann.color : '#1a1a1a'}
+                              onChange={e => {
+                                setStrokeColorSync(e.target.value);
+                              }}
+                              style={{
+                                position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                                border: 'none', padding: 0, opacity: 0, cursor: 'pointer'
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Fill options for shapes */}
+                        {['rect', 'circle'].includes(ann.type) && (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, position: 'relative' }}>
+                              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>Fill Color</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--surface-hover)', border: '1px solid var(--border)', padding: '6px 8px', borderRadius: 4, fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
+                                <span style={{
+                                  width: 10, height: 10, borderRadius: '50%',
+                                  background: (ann.fillColor || 'transparent') === 'transparent' ? 'linear-gradient(135deg, #fff 45%, #ff3b30 45%, #ff3b30 55%, #fff 55%)' : ann.fillColor,
+                                  border: '1px solid rgba(0,0,0,0.1)'
+                                }} />
+                                <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {(ann.fillColor || 'transparent') === 'transparent' ? 'NONE' : ann.fillColor}
+                                </span>
+                                <input
+                                  type="color"
+                                  value={(ann.fillColor && ann.fillColor.startsWith('#')) ? ann.fillColor : '#ffffff'}
+                                  onChange={e => {
+                                    setFillColorSync(e.target.value);
+                                  }}
+                                  style={{
+                                    position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                                    border: 'none', padding: 0, opacity: 0, cursor: 'pointer'
+                                  }}
+                                />
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>Fill Type</span>
+                              <button
+                                onClick={() => {
+                                  const currentFill = ann.fillColor || 'transparent';
+                                  setFillColorSync(currentFill === 'transparent' ? '#ffffff' : 'transparent');
+                                }}
+                                style={{
+                                  background: 'var(--surface-hover)', border: '1px solid var(--border)',
+                                  borderRadius: 4, padding: '6px 8px', fontSize: 11, fontWeight: 600,
+                                  color: 'var(--sketch-text)', cursor: 'pointer', textAlign: 'center',
+                                  height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                }}
+                              >
+                                {(ann.fillColor || 'transparent') === 'transparent' ? 'Solid Fill' : 'No Fill'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Stroke thickness or size control */}
+                        {['rect', 'circle', 'line', 'arrow', 'path', 'highlight'].includes(ann.type) && (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>
+                                {ann.type === 'highlight' ? 'Size' : 'Thickness'}
+                              </span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--surface-hover)', border: '1px solid var(--border)', padding: '4px 8px', borderRadius: 4 }}>
+                                <input
+                                  type="range" min={1} max={ann.type === 'highlight' ? 40 : 16}
+                                  value={ann.strokeWidth || 3}
+                                  onChange={e => {
+                                    setStrokeWidthSync(Number(e.target.value));
+                                  }}
+                                  style={{ width: '100%', accentColor: 'var(--cat-edit)', cursor: 'pointer' }}
+                                />
+                                <span style={{ fontSize: 11, fontWeight: 500, minWidth: 18, textAlign: 'right' }}>
+                                  {ann.strokeWidth || 3}px
+                                </span>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>Rotation</span>
+                              <div style={{ background: 'var(--surface-hover)', border: '1px solid var(--border)', padding: '6px 8px', borderRadius: 4, fontSize: 12, fontWeight: 500 }}>
+                                {angleDeg}°
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Text properties */}
+                        {ann.type === 'text' && (
+                          <>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>Font Size</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--surface-hover)', border: '1px solid var(--border)', padding: '4px 8px', borderRadius: 4 }}>
+                                  <input
+                                    type="range" min={8} max={72}
+                                    value={ann.fontSize || 18}
+                                    onChange={e => {
+                                      setTextSizeSync(Number(e.target.value));
+                                    }}
+                                    style={{ width: '100%', accentColor: 'var(--cat-edit)', cursor: 'pointer' }}
+                                  />
+                                  <span style={{ fontSize: 11, fontWeight: 500, minWidth: 18, textAlign: 'right' }}>
+                                    {ann.fontSize || 18}px
+                                  </span>
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>Rotation</span>
+                                <div style={{ background: 'var(--surface-hover)', border: '1px solid var(--border)', padding: '6px 8px', borderRadius: 4, fontSize: 12, fontWeight: 500 }}>
+                                  {angleDeg}°
+                                </div>
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>Font Family</span>
+                              <select
+                                value={
+                                  FONT_OPTIONS.find(f => f.css === ann.fontFamily)?.id || 'auto'
+                                }
+                                onChange={e => {
+                                  setSelectedFontSync(e.target.value);
+                                }}
+                                style={{
+                                  background: 'var(--surface-hover)', border: '1px solid var(--border)',
+                                  color: 'var(--sketch-text)', borderRadius: 4, padding: '6px 8px', fontSize: 12,
+                                  fontFamily: 'var(--font-sans)', outline: 'none', cursor: 'pointer'
+                                }}
+                              >
+                                {FONT_OPTIONS.map(f => {
+                                  const label = f.id === 'auto'
+                                    ? `Match PDF (${ann.detectedFont ? FONT_OPTIONS.find(x => x.css === ann.detectedFont)?.label || 'Detect' : 'Detect'})`
+                                    : f.label;
+                                  return (
+                                    <option key={f.id} value={f.id}>
+                                      {label}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>Text Style</span>
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <button
+                                  onClick={() => {
+                                    const currentBold = ann.fontWeight >= 700;
+                                    setTextBoldSync(!currentBold);
+                                  }}
+                                  style={{
+                                    flex: 1, background: (ann.fontWeight >= 700) ? 'var(--cat-edit-bg)' : 'var(--surface-hover)',
+                                    color: (ann.fontWeight >= 700) ? 'var(--cat-edit)' : 'var(--sketch-text)',
+                                    border: '1px solid var(--border)', borderRadius: 4, padding: '6px 8px',
+                                    fontSize: 12, fontWeight: 'bold', cursor: 'pointer'
+                                  }}
+                                >
+                                  Bold
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    const currentItalic = ann.fontStyle === 'italic';
+                                    setTextItalicSync(!currentItalic);
+                                  }}
+                                  style={{
+                                    flex: 1, background: (ann.fontStyle === 'italic') ? 'var(--cat-edit-bg)' : 'var(--surface-hover)',
+                                    color: (ann.fontStyle === 'italic') ? 'var(--cat-edit)' : 'var(--sketch-text)',
+                                    border: '1px solid var(--border)', borderRadius: 4, padding: '6px 8px',
+                                    fontSize: 12, fontStyle: 'italic', cursor: 'pointer'
+                                  }}
+                                >
+                                  Italic
+                                </button>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
-              {/* Stats */}
-              <div style={{ ...S.panelSection, borderBottom: 'none' }}>
-                <div style={{ fontSize: 8, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', lineHeight: 1.8 }}>
-                  <div>page {currentPage}: {pageAnns.length} annotations</div>
-                  <div>total: {totalAnns} across {totalPages} pages</div>
-                  <div>history: {historyIdx + 1}/{history.length}</div>
+              {/* Stats panel */}
+              <div style={{ ...S.panelSection, borderBottom: 'none', marginTop: 'auto', background: 'var(--surface-hover)', borderTop: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontFamily: 'var(--font-sans)', fontSize: 11, color: 'var(--text-muted)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Active Page Layers</span>
+                    <span style={{ fontWeight: 600, color: 'var(--sketch-text)' }}>{pageAnns.length}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Total Document Layers</span>
+                    <span style={{ fontWeight: 600, color: 'var(--sketch-text)' }}>{totalAnns}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Undo History States</span>
+                    <span style={{ fontWeight: 600, color: 'var(--sketch-text)' }}>{historyIdx + 1} / {history.length}</span>
+                  </div>
                 </div>
               </div>
             </>
@@ -2786,9 +3136,19 @@ export default function PdfEditor({ onBack, tool }) {
           <span style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 3px' }} />
 
           <button style={{ ...S.navBtn(false), width: 'auto', padding: '0 5px', fontSize: 9, fontFamily: 'var(--font-sans)' }}
-            onClick={() => { setAnnsH(prev => ({ ...prev, [currentPage]: [] })); setSelectedIdx(null); }}>clear page</button>
-          <button style={{ ...S.navBtn(false), width: 'auto', padding: '0 5px', fontSize: 9, fontFamily: 'var(--font-sans)' }}
-            onClick={() => { setFile(null); setPdfDoc(null); setAnnotations({}); setPdfBytes(null); setThumbnails({}); }}>close</button>
+            onClick={() => {
+              if (window.confirm("Are you sure you want to clear all annotations from the current page?")) {
+                setAnnsH(prev => ({ ...prev, [currentPage]: [] }));
+                setSelectedIdx(null);
+              }
+            }}>clear page</button>
+          <button style={{
+            ...S.navBtn(false), width: 'auto', padding: '0 8px', fontSize: 9,
+            fontFamily: 'var(--font-sans)', fontWeight: 600, color: 'var(--text-danger)',
+            border: '1px dashed var(--text-danger)', borderRadius: 4, marginLeft: 4,
+            background: 'rgba(239, 68, 68, 0.05)'
+          }}
+            onClick={handleClearWorkspace}>Clear & Start New</button>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
