@@ -4,6 +4,7 @@ import { saveAs } from 'file-saver';
 import { formatSize } from '../App';
 import { savePDFToDB, loadPDFFromDB, clearPDFFromDB } from './PdfEditorDB';
 import PdfEditorTextOverlay from './PdfEditorTextOverlay';
+import ScrubbySlider from './ScrubbySlider';
 
 /* ================================================================
    PDF.js dynamic loader
@@ -70,6 +71,21 @@ function detectFontFamily(fontName) {
   // Default to serif for standard book/document layouts
   return '"Times New Roman", "Georgia", serif';
 }
+
+/* Detect best CSS font-weight from font name */
+function detectFontWeight(fontName, actualFamily) {
+  const fn = ((fontName || '') + ' ' + (actualFamily || '')).toLowerCase();
+  if (/bold|black|heavy|semibold|medium/i.test(fn)) {
+    if (/semibold|medium/i.test(fn)) return 600;
+    return 700;
+  }
+  if (/light|thin|ultralight|extralight/i.test(fn)) {
+    if (/thin|ultralight/i.test(fn)) return 200;
+    return 300;
+  }
+  return 400;
+}
+
 
 const TYPE_ICONS = {
   path: '\u270E', text: 'T', rect: '\u25A1', circle: '\u25CB',
@@ -865,9 +881,12 @@ export default function PdfEditor({ onBack, tool }) {
             // Use PDF.js styles for actual font family when available
             const styleInfo = styles[fn];
             const actualFamily = styleInfo?.fontFamily || '';
-            const detFont = actualFamily
-              ? detectFontFamily(actualFamily)
-              : detectFontFamily(fn);
+            const detFont = [
+              fn ? `"${fn}"` : null,
+              actualFamily ? `"${actualFamily}"` : null,
+              detectFontFamily(actualFamily || fn)
+            ].filter(Boolean).join(', ');
+            const detectedWeight = detectFontWeight(fn, actualFamily);
             const isBoldFromName = /bold/i.test(fn) || /bold/i.test(actualFamily);
             const isItalicFromName = /italic|oblique/i.test(fn) || /italic|oblique/i.test(actualFamily);
             return {
@@ -875,8 +894,9 @@ export default function PdfEditor({ onBack, tool }) {
               fontName: fn,
               actualFamily,
               detectedFont: detFont,
-              isBold: isBoldFromName,
+              isBold: isBoldFromName || detectedWeight >= 600,
               isItalic: isItalicFromName,
+              fontWeight: detectedWeight,
               baseline: y,
             };
           });
@@ -949,6 +969,7 @@ export default function PdfEditor({ onBack, tool }) {
       detectedFont: hitItem.detectedFont,
       isBold: hitItem.isBold,
       isItalic: hitItem.isItalic,
+      fontWeight: hitItem.fontWeight,
       baseline: hitItem.baseline,
     };
   }, [pdfTextItems]);
@@ -1183,7 +1204,7 @@ export default function PdfEditor({ onBack, tool }) {
             const isBold = seg.bold || (ann.fontWeight >= 700);
             const isItalic = seg.italic || (ann.fontStyle === 'italic');
             const s = isItalic ? 'italic ' : '';
-            const w = isBold ? 700 : 400;
+            const w = isBold ? 700 : (ann.fontWeight || 400);
             ctx.font = `${s}${w} ${ann.fontSize}px ${ff}`;
             ctx.fillText(seg.text, currentX, ann.y + li * lh);
             currentX += ctx.measureText(seg.text).width;
@@ -1493,6 +1514,7 @@ export default function PdfEditor({ onBack, tool }) {
           matchedFontSize: hit.fontSize,
           matchedBold: hit.isBold,
           matchedItalic: hit.isItalic,
+          matchedWeight: hit.fontWeight || 400,
           matchedColor: sampledColor,
           matchedFont: hit.detectedFont,
           pdfTextItem: hit,
@@ -1757,26 +1779,31 @@ export default function PdfEditor({ onBack, tool }) {
       let bgColor = '#ffffff';
       if (canvasRef.current) {
         const ctx = canvasRef.current.getContext('2d');
-        // Sample background from area around the text (above the text baseline)
-        const sampleY = Math.round(pi.y - pi.height * 0.5);
+        // Sample from the page margins to get the clean background color
         const samplePoints = [
-          [Math.round(pi.x - 5), sampleY],
-          [Math.round(pi.x + pi.width + 5), sampleY],
-          [Math.round(pi.x + pi.width / 2), Math.round(pi.y - pi.height - 3)],
+          [10, 10],
+          [10, Math.round(pageSize.height / 2)],
+          [Math.round(pageSize.width - 10), 10],
         ];
         let totalR = 0, totalG = 0, totalB = 0, count = 0;
         for (const [sx, sy] of samplePoints) {
           if (sx >= 0 && sy >= 0 && sx < ctx.canvas.width && sy < ctx.canvas.height) {
             const pixel = ctx.getImageData(sx, sy, 1, 1).data;
-            // Only use light pixels (background, not text)
-            if (pixel[0] + pixel[1] + pixel[2] > 600) {
+            if (pixel[3] > 0) {
               totalR += pixel[0]; totalG += pixel[1]; totalB += pixel[2];
               count++;
             }
           }
         }
         if (count > 0) {
-          bgColor = `rgb(${Math.round(totalR/count)}, ${Math.round(totalG/count)}, ${Math.round(totalB/count)})`;
+          const avgR = totalR / count;
+          const avgG = totalG / count;
+          const avgB = totalB / count;
+          if (avgR > 238 && avgG > 238 && avgB > 238) {
+            bgColor = '#ffffff';
+          } else {
+            bgColor = `rgb(${Math.round(avgR)}, ${Math.round(avgG)}, ${Math.round(avgB)})`;
+          }
         }
       }
       return {
@@ -1792,7 +1819,7 @@ export default function PdfEditor({ onBack, tool }) {
       // Re-editing existing annotation
       if (value.trim()) {
         const fs = editingText.matchedFontSize || textSize;
-        const fw = editingText.matchedBold ? 700 : 400;
+        const fw = editingText.matchedBold ? 700 : (editingText.matchedWeight || 400);
         const fst = editingText.matchedItalic ? 'italic' : 'normal';
         const color = editingText.matchedColor || strokeColor;
         updateAnn(editingText.editIdx, {
@@ -1824,7 +1851,7 @@ export default function PdfEditor({ onBack, tool }) {
         return;
       }
       const fs = editingText.matchedFontSize || textSize;
-      const fw = editingText.matchedBold ? 700 : 400;
+      const fw = editingText.matchedBold ? 700 : (editingText.matchedWeight || 400);
       const fst = editingText.matchedItalic ? 'italic' : 'normal';
       const color = editingText.matchedColor || strokeColor;
       const annData = {
@@ -1934,7 +1961,7 @@ export default function PdfEditor({ onBack, tool }) {
   useEffect(() => {
     const onKey = (e) => {
       const tag = document.activeElement?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
 
       const key = e.key.toLowerCase();
       const ctrl = e.ctrlKey || e.metaKey;
@@ -2524,22 +2551,30 @@ export default function PdfEditor({ onBack, tool }) {
                 flexDirection: toolStripWidth > 85 ? 'row' : 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
-                gap: 6,
-                padding: '0 4px',
+                gap: 4,
                 width: '100%',
               }}>
-                {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>PEN</span>}
-                <input type="range" min={1} max={16} value={strokeWidth}
-                  onChange={e => setStrokeWidthSync(Number(e.target.value))}
-                  style={{
-                    width: toolStripWidth > 85 ? '50%' : 30,
-                    height: 18,
-                    accentColor: 'var(--cat-edit)',
-                    cursor: 'pointer',
-                  }}
-                  title="Pen Stroke Size"
+                <ScrubbySlider
+                  label={toolStripWidth > 85 ? "Pen:" : "P:"}
+                  value={strokeWidth}
+                  min={1}
+                  max={16}
+                  onChange={(val) => setStrokeWidthSync(val)}
+                  labelStyle={{ fontSize: 9 }}
+                  style={{ display: 'inline-flex', padding: '2px 4px' }}
                 />
-                <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>{strokeWidth}</span>
+                {toolStripWidth > 85 && (
+                  <input type="range" min={1} max={16} value={strokeWidth}
+                    onChange={e => setStrokeWidthSync(Number(e.target.value))}
+                    style={{
+                      width: '40%',
+                      height: 18,
+                      accentColor: 'var(--cat-edit)',
+                      cursor: 'pointer',
+                    }}
+                    title="Pen Stroke Size"
+                  />
+                )}
               </div>
             </>
           )}
@@ -2553,28 +2588,41 @@ export default function PdfEditor({ onBack, tool }) {
                 flexDirection: toolStripWidth > 85 ? 'row' : 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
-                gap: 6,
-                padding: '0 4px',
+                gap: 4,
                 width: '100%',
               }}>
-                {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>SIZE</span>}
-                <input type="range" min={8} max={72} value={textSize}
-                  onChange={e => {
-                    const val = Number(e.target.value);
+                <ScrubbySlider
+                  label={toolStripWidth > 85 ? "Size:" : "S:"}
+                  value={textSize}
+                  min={8}
+                  max={72}
+                  onChange={(val) => {
                     if (editingText) {
                       setEditingText(prev => ({ ...prev, matchedFontSize: val }));
                     }
                     setTextSizeSync(val);
                   }}
-                  style={{
-                    width: toolStripWidth > 85 ? '50%' : 30,
-                    height: 18,
-                    accentColor: 'var(--cat-edit)',
-                    cursor: 'pointer',
-                  }}
-                  title="Font Size"
+                  labelStyle={{ fontSize: 9 }}
+                  style={{ display: 'inline-flex', padding: '2px 4px' }}
                 />
-                <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>{textSize}</span>
+                {toolStripWidth > 85 && (
+                  <input type="range" min={8} max={72} value={textSize}
+                    onChange={e => {
+                      const val = Number(e.target.value);
+                      if (editingText) {
+                        setEditingText(prev => ({ ...prev, matchedFontSize: val }));
+                      }
+                      setTextSizeSync(val);
+                    }}
+                    style={{
+                      width: '40%',
+                      height: 18,
+                      accentColor: 'var(--cat-edit)',
+                      cursor: 'pointer',
+                    }}
+                    title="Font Size"
+                  />
+                )}
               </div>
               
               {/* Font Family */}
@@ -2937,9 +2985,17 @@ export default function PdfEditor({ onBack, tool }) {
                         {['rect', 'circle', 'line', 'arrow', 'path', 'highlight'].includes(ann.type) && (
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>
-                                {ann.type === 'highlight' ? 'Size' : 'Thickness'}
-                              </span>
+                              <ScrubbySlider
+                                label={ann.type === 'highlight' ? 'Size' : 'Thickness'}
+                                value={ann.strokeWidth || 3}
+                                min={1}
+                                max={ann.type === 'highlight' ? 40 : 16}
+                                onChange={(val) => {
+                                  setStrokeWidthSync(val);
+                                }}
+                                style={{ display: 'inline-flex', padding: 0 }}
+                                labelStyle={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500 }}
+                              />
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--surface-hover)', border: '1px solid var(--border)', padding: '4px 8px', borderRadius: 4 }}>
                                 <input
                                   type="range" min={1} max={ann.type === 'highlight' ? 40 : 16}
@@ -2950,7 +3006,7 @@ export default function PdfEditor({ onBack, tool }) {
                                   style={{ width: '100%', accentColor: 'var(--cat-edit)', cursor: 'pointer' }}
                                 />
                                 <span style={{ fontSize: 11, fontWeight: 500, minWidth: 18, textAlign: 'right' }}>
-                                  {ann.strokeWidth || 3}px
+                                  px
                                 </span>
                               </div>
                             </div>
@@ -2968,7 +3024,17 @@ export default function PdfEditor({ onBack, tool }) {
                           <>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>Font Size</span>
+                                <ScrubbySlider
+                                  label="Font Size"
+                                  value={ann.fontSize || 18}
+                                  min={8}
+                                  max={72}
+                                  onChange={(val) => {
+                                    setTextSizeSync(val);
+                                  }}
+                                  style={{ display: 'inline-flex', padding: 0 }}
+                                  labelStyle={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500 }}
+                                />
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--surface-hover)', border: '1px solid var(--border)', padding: '4px 8px', borderRadius: 4 }}>
                                   <input
                                     type="range" min={8} max={72}
@@ -2979,7 +3045,7 @@ export default function PdfEditor({ onBack, tool }) {
                                     style={{ width: '100%', accentColor: 'var(--cat-edit)', cursor: 'pointer' }}
                                   />
                                   <span style={{ fontSize: 11, fontWeight: 500, minWidth: 18, textAlign: 'right' }}>
-                                    {ann.fontSize || 18}px
+                                    px
                                   </span>
                                 </div>
                               </div>

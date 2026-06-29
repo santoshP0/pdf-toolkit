@@ -1,4 +1,63 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import ScrubbySlider from './ScrubbySlider';
+
+// Clean HTML to our format (<b>, <i>, newlines)
+function cleanHtmlToTags(html) {
+  if (!html || html === '<br>' || html === '<div><br></div>') return '';
+
+  // Convert &nbsp; and \u00a0 to normal spaces
+  const sanitizedHtml = html
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\u00a0/g, ' ');
+
+  const temp = document.createElement('div');
+  temp.innerHTML = sanitizedHtml;
+
+  let result = '';
+
+  function traverse(node, isBold = false, isItalic = false) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      let val = node.nodeValue;
+      if (isBold) val = `<b>${val}</b>`;
+      if (isItalic) val = `<i>${val}</i>`;
+      result += val;
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const tag = node.nodeName.toLowerCase();
+      
+      const nodeBold = isBold || tag === 'b' || tag === 'strong' || node.style.fontWeight === 'bold' || parseInt(node.style.fontWeight, 10) >= 700;
+      const nodeItalic = isItalic || tag === 'i' || tag === 'em' || node.style.fontStyle === 'italic';
+
+      if (tag === 'br') {
+        result += '\n';
+      } else if (tag === 'div' || tag === 'p') {
+        if (result && !result.endsWith('\n')) {
+          result += '\n';
+        }
+        for (let child of node.childNodes) {
+          traverse(child, nodeBold, nodeItalic);
+        }
+      } else {
+        for (let child of node.childNodes) {
+          traverse(child, nodeBold, nodeItalic);
+        }
+      }
+    }
+  }
+
+  for (let child of temp.childNodes) {
+    traverse(child);
+  }
+
+  let finalStr = result
+    .replace(/<\/b>(\s*)<b>/gi, '$1')
+    .replace(/<\/i>(\s*)<i>/gi, '$1');
+
+  finalStr = finalStr
+    .replace(/<b><\/b>/gi, '')
+    .replace(/<i><\/i>/gi, '');
+
+  return finalStr;
+}
 
 export default function PdfEditorTextOverlay({
   editingText,
@@ -17,13 +76,44 @@ export default function PdfEditorTextOverlay({
   selectedFont,
   setSelectedFont,
 }) {
+  const [isBoldActive, setIsBoldActive] = useState(false);
+  const [isItalicActive, setIsItalicActive] = useState(false);
+
+  // Store the initial HTML when editingText is first set or changes
+  const initialHTML = useRef(null);
+  const currentEditKey = `${editingText?.x}-${editingText?.y}-${editingText?.editIdx}`;
+  const prevEditKey = useRef('');
+  const shouldSetHTML = useRef(false);
+
+  if (editingText && currentEditKey !== prevEditKey.current) {
+    initialHTML.current = (editingText.value || '').replace(/\n/g, '<br />');
+    prevEditKey.current = currentEditKey;
+    shouldSetHTML.current = true;
+  }
+
+  const updateActiveStyles = () => {
+    setIsBoldActive(document.queryCommandState('bold'));
+    setIsItalicActive(document.queryCommandState('italic'));
+  };
+
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      if (document.activeElement === textInputRef.current) {
+        updateActiveStyles();
+      }
+    };
+    document.addEventListener('selectionchange', handleSelectionChange);
+    return () => {
+      document.removeEventListener('selectionchange', handleSelectionChange);
+    };
+  }, [textInputRef]);
+
   if (!editingText) return null;
 
   const isPdfText = !!editingText.pdfTextItem;
   const fs = editingText.matchedFontSize || textSize;
   const lineW = isPdfText ? editingText.pdfTextItem.width + 8 : undefined;
   
-  // Resolve CSS Font family name
   const resolvedFontCSS = selectedFont === 'auto'
     ? (editingText.matchedFont || '"Times New Roman", serif')
     : (FONT_OPTIONS.find(f => f.id === selectedFont)?.css || '"Times New Roman", serif');
@@ -32,6 +122,16 @@ export default function PdfEditorTextOverlay({
 
   return (
     <>
+      <style>{`
+        .pdf-editor-contenteditable:empty:before {
+          content: attr(placeholder);
+          color: var(--sketch-text);
+          opacity: 0.5;
+          pointer-events: none;
+          display: block;
+        }
+      `}</style>
+
       {/* Floating formatting bar */}
       <div
         className="formatting-bar"
@@ -56,7 +156,17 @@ export default function PdfEditorTextOverlay({
         {/* Font family */}
         <select
           value={selectedFont}
-          onChange={e => setSelectedFont(e.target.value)}
+          onChange={e => {
+            const val = e.target.value;
+            setSelectedFont(val);
+            setEditingText(prev => ({ ...prev, matchedFont: val }));
+            if (textInputRef.current) {
+              const resolved = val === 'auto'
+                ? (editingText.matchedFont || '"Times New Roman", serif')
+                : (FONT_OPTIONS.find(f => f.id === val)?.css || '"Times New Roman", serif');
+              textInputRef.current.style.fontFamily = resolved;
+            }
+          }}
           style={{
             fontSize: 9, padding: '2px 4px',
             border: '1px solid var(--border)', borderRadius: 4,
@@ -82,52 +192,39 @@ export default function PdfEditorTextOverlay({
           })}
         </select>
 
-        {/* Font size adjustment */}
-        <button
-          onClick={() => {
-            const cur = editingText.matchedFontSize || textSize;
-            const next = Math.max(8, cur - 1);
+        {/* Font size adjustment with ScrubbySlider */}
+        <ScrubbySlider
+          label="Size:"
+          value={editingText.matchedFontSize || textSize}
+          min={8}
+          max={72}
+          step={1}
+          onChange={(next) => {
             setEditingText(prev => ({ ...prev, matchedFontSize: next }));
             setTextSize(next);
+            if (textInputRef.current) {
+              textInputRef.current.style.fontSize = `${next}px`;
+            }
           }}
-          style={{ border: 'none', background: 'none', fontSize: 11, cursor: 'pointer', color: 'var(--sketch-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: 3 }}
-          onMouseEnter={e => e.target.style.background = 'var(--bg2)'}
-          onMouseLeave={e => e.target.style.background = 'none'}
-        >
-          A-
-        </button>
-        <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', minWidth: 16, textAlign: 'center', color: 'var(--sketch-text)' }}>
-          {editingText.matchedFontSize || textSize}
+          style={{ marginRight: 2 }}
+        />
+        <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', minWidth: 16, color: 'var(--sketch-text)', marginRight: 4 }}>
+          px
         </span>
-        <button
-          onClick={() => {
-            const cur = editingText.matchedFontSize || textSize;
-            const next = Math.min(72, cur + 1);
-            setEditingText(prev => ({ ...prev, matchedFontSize: next }));
-            setTextSize(next);
-          }}
-          style={{ border: 'none', background: 'none', fontSize: 11, cursor: 'pointer', color: 'var(--sketch-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: 3 }}
-          onMouseEnter={e => e.target.style.background = 'var(--bg2)'}
-          onMouseLeave={e => e.target.style.background = 'none'}
-        >
-          A+
-        </button>
 
         <div style={{ width: 1, height: 12, background: 'var(--border)' }} />
 
         {/* Bold Toggle */}
         <button
-          onMouseDown={e => e.preventDefault()}
-          onClick={() => {
-            const formatted = handleEditorFormat('b');
-            if (!formatted) {
-              setEditingText(prev => ({ ...prev, matchedBold: !prev.matchedBold }));
-            }
+          onMouseDown={e => {
+            e.preventDefault();
+            document.execCommand('bold', false, null);
+            updateActiveStyles();
           }}
           style={{
             width: 18, height: 18, borderRadius: 3, border: 'none',
-            background: editingText.matchedBold ? 'var(--cat-edit-bg)' : 'none',
-            color: editingText.matchedBold ? 'var(--cat-edit)' : 'var(--sketch-text)',
+            background: isBoldActive ? 'var(--cat-edit-bg)' : 'none',
+            color: isBoldActive ? 'var(--cat-edit)' : 'var(--sketch-text)',
             fontWeight: 'bold', fontSize: 10, cursor: 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center'
           }}
@@ -138,17 +235,15 @@ export default function PdfEditorTextOverlay({
 
         {/* Italic Toggle */}
         <button
-          onMouseDown={e => e.preventDefault()}
-          onClick={() => {
-            const formatted = handleEditorFormat('i');
-            if (!formatted) {
-              setEditingText(prev => ({ ...prev, matchedItalic: !prev.matchedItalic }));
-            }
+          onMouseDown={e => {
+            e.preventDefault();
+            document.execCommand('italic', false, null);
+            updateActiveStyles();
           }}
           style={{
             width: 18, height: 18, borderRadius: 3, border: 'none',
-            background: editingText.matchedItalic ? 'var(--cat-edit-bg)' : 'none',
-            color: editingText.matchedItalic ? 'var(--cat-edit)' : 'var(--sketch-text)',
+            background: isItalicActive ? 'var(--cat-edit-bg)' : 'none',
+            color: isItalicActive ? 'var(--cat-edit)' : 'var(--sketch-text)',
             fontStyle: 'italic', fontSize: 10, cursor: 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center'
           }}
@@ -175,6 +270,9 @@ export default function PdfEditorTextOverlay({
               const val = e.target.value;
               setEditingText(prev => ({ ...prev, matchedColor: val }));
               setStrokeColor(val);
+              if (textInputRef.current) {
+                textInputRef.current.style.color = val;
+              }
             }}
             style={{
               position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
@@ -188,7 +286,10 @@ export default function PdfEditorTextOverlay({
         {/* Save Button */}
         <button
           onClick={() => {
-            commitText();
+            if (textInputRef.current) {
+              const html = textInputRef.current.innerHTML;
+              commitText(cleanHtmlToTags(html));
+            }
           }}
           style={{
             border: 'none', background: 'var(--cat-edit)', color: '#fff',
@@ -200,10 +301,14 @@ export default function PdfEditorTextOverlay({
         </button>
       </div>
 
-      <textarea
+      <div
         ref={el => {
           textInputRef.current = el;
           if (el) {
+            if (shouldSetHTML.current) {
+              el.innerHTML = initialHTML.current;
+              shouldSetHTML.current = false;
+            }
             if (!isPdfText) {
               // Auto-grow height & width immediately
               el.style.height = 'auto';
@@ -218,7 +323,6 @@ export default function PdfEditorTextOverlay({
               if (text.length > 0) {
                 const relX = editingText.clickX - editingText.x;
                 const isBold = editingText.matchedBold;
-                // Measure character widths using a temporary canvas
                 const mc = document.createElement('canvas').getContext('2d');
                 const wt = isBold ? 700 : 400;
                 const st = editingText.matchedItalic ? 'italic ' : '';
@@ -233,18 +337,37 @@ export default function PdfEditorTextOverlay({
                     break;
                   }
                 }
-                // Clear clickX so re-renders don't reset cursor
                 editingText.clickX = null;
-                // Use requestAnimationFrame to set cursor after React renders
                 requestAnimationFrame(() => {
                   if (el && el === textInputRef.current) {
-                    el.setSelectionRange(cursorIdx, cursorIdx);
-                    // For PDF text with nowrap, scroll textarea to show cursor
-                    if (isPdfText) {
-                      const cursorPixelX = mc.measureText(text.substring(0, cursorIdx)).width;
-                      const visibleW = el.clientWidth;
-                      // Center cursor in visible area
-                      el.scrollLeft = Math.max(0, cursorPixelX - visibleW / 2);
+                    const range = document.createRange();
+                    const sel = window.getSelection();
+                    
+                    function findTextNode(node) {
+                      if (node.nodeType === Node.TEXT_NODE) return node;
+                      for (let child of node.childNodes) {
+                        const found = findTextNode(child);
+                        if (found) return found;
+                      }
+                      return null;
+                    }
+                    
+                    const textNode = findTextNode(el);
+                    if (textNode) {
+                      const offset = Math.min(cursorIdx, textNode.length);
+                      try {
+                        range.setStart(textNode, offset);
+                        range.collapse(true);
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                      } catch (err) {
+                        console.error('Failed to set caret selection:', err);
+                      }
+                    } else {
+                      range.selectNodeContents(el);
+                      range.collapse(false);
+                      sel.removeAllRanges();
+                      sel.addRange(range);
                     }
                   }
                 });
@@ -255,31 +378,35 @@ export default function PdfEditorTextOverlay({
           }
         }}
         key={`te-${editingText.x}-${editingText.y}-${editingText.editIdx}`}
-        autoFocus
-        value={editingText.value || ''}
-        onChange={e => {
-          const val = e.target.value;
-          setEditingText(prev => ({ ...prev, value: val }));
+        contentEditable={true}
+        suppressContentEditableWarning={true}
+        onInput={e => {
+          updateActiveStyles();
+          
+          if (!isPdfText) {
+            e.target.style.height = 'auto';
+            e.target.style.height = e.target.scrollHeight + 'px';
+            e.target.style.width = 'auto';
+            e.target.style.width = Math.max(60, Math.min(e.target.scrollWidth + 10, pageSize.width - editingText.x - 4)) + 'px';
+          }
         }}
         placeholder="Type..."
-        rows={1}
+        className="pdf-editor-contenteditable"
         style={{
           position: 'absolute',
           left: editingText.x,
           top: editingText.y - fs,
           fontSize: fs,
           fontFamily: resolvedFontCSS,
-          fontWeight: editingText.matchedBold ? 700 : 400,
+          fontWeight: editingText.matchedBold ? 700 : (editingText.matchedWeight || 400),
           fontStyle: editingText.matchedItalic ? 'italic' : 'normal',
-          color: editingText.matchedColor
-            || strokeColor,
+          color: editingText.matchedColor || strokeColor,
           background: isPdfText ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.06)',
           border: 'none',
           borderBottom: '2px solid var(--cat-edit)',
           borderRadius: 0,
           padding: '2px 3px',
           outline: 'none',
-          // PDF text: fixed line width, no wrap; New text: auto-grow
           width: isPdfText ? Math.min(lineW, pageSize.width - editingText.x - 4) : undefined,
           minWidth: isPdfText ? undefined : 60,
           maxWidth: pageSize.width - editingText.x - 4,
@@ -290,35 +417,36 @@ export default function PdfEditorTextOverlay({
           caretColor: 'var(--cat-edit)',
           whiteSpace: isPdfText ? 'nowrap' : 'pre-wrap',
           wordBreak: isPdfText ? 'normal' : 'break-word',
-          // PDF text: fixed single-line height
           height: isPdfText ? Math.round(fs * 1.25 + 8) : undefined,
           boxShadow: isPdfText
             ? '0 0 0 1px rgba(106,76,147,0.2), 0 2px 8px rgba(0,0,0,0.08)'
             : 'none',
           pointerEvents: 'auto',
         }}
-        onInput={e => {
-          if (!isPdfText) {
-            e.target.style.height = 'auto';
-            e.target.style.height = e.target.scrollHeight + 'px';
-            e.target.style.width = 'auto';
-            e.target.style.width = Math.max(60, Math.min(e.target.scrollWidth + 10, pageSize.width - editingText.x - 4)) + 'px';
-          }
-        }}
         onKeyDown={e => {
           e.stopPropagation();
-          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitText(e.target.value); }
-          if (e.key === 'Escape') { e.preventDefault(); setEditingText(null); setGuides({ h: [], v: [] }); }
+          if (e.key === 'Enter') {
+            if (isPdfText) {
+              e.preventDefault();
+              commitText(cleanHtmlToTags(e.target.innerHTML));
+            }
+          }
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            setEditingText(null);
+            setGuides({ h: [], v: [] });
+          }
         }}
         onBlur={e => {
-          const val = e.target.value;
+          const html = e.target.innerHTML;
+          const cleanVal = cleanHtmlToTags(html);
           setTimeout(() => {
             if (isInteractingWithToolbarRef.current) {
               textInputRef.current?.focus();
               return;
             }
             if (document.activeElement !== textInputRef.current) {
-              commitText(val);
+              commitText(cleanVal);
             }
           }, 150);
         }}
