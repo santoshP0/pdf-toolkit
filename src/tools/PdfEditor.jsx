@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts, degrees } from 'pdf-lib';
 import { saveAs } from 'file-saver';
 import { formatSize } from '../App';
 
@@ -39,6 +39,36 @@ const COLORS = [
   '#e9c46a', '#2a9d8f', '#457b9d', '#6a4c93',
 ];
 
+const FONT_OPTIONS = [
+  { id: 'auto',       label: 'Auto',            css: 'auto' },
+  { id: 'serif',      label: 'Serif',           css: '"Times New Roman", "Georgia", serif' },
+  { id: 'sans',       label: 'Sans-serif',      css: '"Helvetica Neue", "Arial", sans-serif' },
+  { id: 'mono',       label: 'Monospace',       css: '"Courier New", "Courier", monospace' },
+  { id: 'georgia',    label: 'Georgia',         css: '"Georgia", serif' },
+  { id: 'garamond',   label: 'Garamond',        css: '"Garamond", "Times New Roman", serif' },
+  { id: 'palatino',   label: 'Palatino',        css: '"Palatino Linotype", "Book Antiqua", serif' },
+  { id: 'arial',      label: 'Arial',           css: '"Arial", "Helvetica", sans-serif' },
+  { id: 'verdana',    label: 'Verdana',         css: '"Verdana", sans-serif' },
+  { id: 'tahoma',     label: 'Tahoma',          css: '"Tahoma", "Geneva", sans-serif' },
+];
+
+/* Detect best CSS font-family from a PDF internal font name */
+function detectFontFamily(fontName) {
+  if (!fontName) return '"Times New Roman", serif';
+  const fn = fontName.toLowerCase();
+  if (/courier|consola|mono|fixed|monospace/i.test(fn)) {
+    return '"Courier New", monospace';
+  }
+  if (/sans-serif|sans|arial|helv|swiss|calibri|verdana|tahoma|trebuc|segoe|roboto|lato|nunito|poppins|inter/i.test(fn)) {
+    return '"Helvetica Neue", "Arial", sans-serif';
+  }
+  if (/serif|times|georgia|garamond|palatino|book/i.test(fn)) {
+    return '"Times New Roman", "Georgia", serif';
+  }
+  // Default to serif for standard book/document layouts
+  return '"Times New Roman", "Georgia", serif';
+}
+
 const TYPE_ICONS = {
   path: '\u270E', text: 'T', rect: '\u25A1', circle: '\u25CB',
   line: '\u2571', arrow: '\u2192', highlight: '\u2588',
@@ -72,27 +102,35 @@ const S = {
   },
 
   /* Slim left toolbar */
-  toolStrip: {
-    width: 44, flexShrink: 0,
+  toolStrip: (w) => ({
+    width: w || 44, flexShrink: 0,
     display: 'flex', flexDirection: 'column', alignItems: 'center',
     padding: '6px 0', gap: 1,
     background: 'var(--surface)',
     borderRight: '1px solid var(--border)',
     overflowY: 'auto', overflowX: 'hidden',
-  },
-  toolBtn: (active) => ({
-    width: 32, height: 32,
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    border: 'none',
-    borderRadius: 6,
-    cursor: 'pointer',
-    fontSize: 13, fontWeight: 700,
-    background: active ? 'var(--cat-edit-bg)' : 'transparent',
-    color: active ? 'var(--cat-edit)' : 'var(--sketch-text)',
-    transition: 'background 0.1s, color 0.1s',
-    padding: 0,
     position: 'relative',
   }),
+  toolBtn: (active, w) => {
+    const isWide = w > 85;
+    return {
+      width: isWide ? `${w - 12}px` : 32,
+      height: 32,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: isWide ? 'flex-start' : 'center',
+      border: 'none',
+      borderRadius: 6,
+      cursor: 'pointer',
+      fontSize: 13, fontWeight: 700,
+      background: active ? 'var(--cat-edit-bg)' : 'transparent',
+      color: active ? 'var(--cat-edit)' : 'var(--sketch-text)',
+      transition: 'all 0.1s',
+      padding: isWide ? '0 8px' : 0,
+      position: 'relative',
+      gap: isWide ? 8 : 0,
+    };
+  },
   toolDivider: {
     width: 22, height: 0,
     borderTop: '1px solid var(--border)',
@@ -284,12 +322,18 @@ const S = {
    Helpers
    ================================================================ */
 function hexToRgb(hex) {
+  if (!hex || hex === 'transparent') return rgb(0, 0, 0);
+  // Handle rgb(...) format
+  const rgbMatch = hex.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+  if (rgbMatch) {
+    return rgb(+rgbMatch[1] / 255, +rgbMatch[2] / 255, +rgbMatch[3] / 255);
+  }
   const h = hex.replace('#', '');
-  return rgb(
-    parseInt(h.substring(0, 2), 16) / 255,
-    parseInt(h.substring(2, 4), 16) / 255,
-    parseInt(h.substring(4, 6), 16) / 255,
-  );
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return rgb(0, 0, 0);
+  return rgb(r / 255, g / 255, b / 255);
 }
 
 function clamp(val, min, max) {
@@ -333,11 +377,55 @@ function getBounds(ann) {
   return { x: 0, y: 0, w: 0, h: 0 };
 }
 
+function getHandleAt(ann, px, py) {
+  const b = getBounds(ann);
+  const pad = 6;
+  
+  let tx = px;
+  let ty = py;
+  if (ann.rotation) {
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    const dx = px - cx;
+    const dy = py - cy;
+    const cos = Math.cos(-ann.rotation);
+    const sin = Math.sin(-ann.rotation);
+    tx = cx + dx * cos - dy * sin;
+    ty = cy + dx * sin + dy * cos;
+  }
+
+  const handles = {
+    nw: { x: b.x - 4, y: b.y - 4 },
+    ne: { x: b.x + b.w, y: b.y - 4 },
+    sw: { x: b.x - 4, y: b.y + b.h },
+    se: { x: b.x + b.w, y: b.y + b.h },
+    rotate: { x: b.x + b.w / 2, y: b.y - 20 }
+  };
+  for (const [dir, pt] of Object.entries(handles)) {
+    if (Math.abs(tx - pt.x) <= pad + 3 && Math.abs(ty - pt.y) <= pad + 3) {
+      return dir;
+    }
+  }
+  return null;
+}
+
 function hitTest(ann, px, py) {
   const b = getBounds(ann);
   const pad = 6;
-  return px >= b.x - pad && px <= b.x + b.w + pad &&
-         py >= b.y - pad && py <= b.y + b.h + pad;
+  let tx = px;
+  let ty = py;
+  if (ann.rotation) {
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    const dx = px - cx;
+    const dy = py - cy;
+    const cos = Math.cos(-ann.rotation);
+    const sin = Math.sin(-ann.rotation);
+    tx = cx + dx * cos - dy * sin;
+    ty = cy + dx * sin + dy * cos;
+  }
+  return tx >= b.x - pad && tx <= b.x + b.w + pad &&
+         ty >= b.y - pad && ty <= b.y + b.h + pad;
 }
 
 function moveAnn(ann, dx, dy) {
@@ -386,6 +474,9 @@ export default function PdfEditor({ onBack, tool }) {
   const [strokeColor, setStrokeColor] = useState('#1a1a1a');
   const [strokeWidth, setStrokeWidth] = useState(3);
   const [textSize, setTextSize] = useState(18);
+  const [selectedFont, setSelectedFont] = useState('auto');
+  const [textBold, setTextBold] = useState(false);
+  const [textItalic, setTextItalic] = useState(false);
 
   /* Annotations keyed by page */
   const [annotations, setAnnotations] = useState({});
@@ -397,6 +488,8 @@ export default function PdfEditor({ onBack, tool }) {
   const [selectedIdx, setSelectedIdx] = useState(null);
   const [draggingIdx, setDraggingIdx] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [resizeDirection, setResizeDirection] = useState(null);
+  const resizeStartRef = useRef(null);
 
   /* Undo/redo */
   const [history, setHistory] = useState([]);
@@ -414,6 +507,8 @@ export default function PdfEditor({ onBack, tool }) {
   const [showLayers, setShowLayers] = useState(true);
   const [thumbnails, setThumbnails] = useState({});
   const [hoveredTool, setHoveredTool] = useState(null);
+  const [toolStripWidth, setToolStripWidth] = useState(44);
+  const toolStripResizing = useRef(false);
 
   /* Context menu */
   const [contextMenu, setContextMenu] = useState(null);
@@ -430,6 +525,8 @@ export default function PdfEditor({ onBack, tool }) {
   const overlayRef = useRef();
   const scrollRef = useRef();
   const textInputRef = useRef();
+  const pdfBytesRef = useRef(null);
+  const isInteractingWithToolbarRef = useRef(false);
 
   const pageAnns = annotations[currentPage] || [];
   const totalAnns = Object.values(annotations).reduce((s, a) => s + a.length, 0);
@@ -457,6 +554,87 @@ export default function PdfEditor({ onBack, tool }) {
       return next;
     });
   }, [pushHistory]);
+
+  const setStrokeColorSync = (val) => {
+    setStrokeColor(val);
+    if (selectedIdx !== null) {
+      setAnnsH(prev => {
+        const list = [...(prev[currentPage] || [])];
+        if (list[selectedIdx]) {
+          list[selectedIdx] = { ...list[selectedIdx], color: val };
+        }
+        return { ...prev, [currentPage]: list };
+      });
+    }
+  };
+
+  const setStrokeWidthSync = (val) => {
+    setStrokeWidth(val);
+    if (selectedIdx !== null) {
+      setAnnsH(prev => {
+        const list = [...(prev[currentPage] || [])];
+        if (list[selectedIdx]) {
+          list[selectedIdx] = { ...list[selectedIdx], strokeWidth: val };
+        }
+        return { ...prev, [currentPage]: list };
+      });
+    }
+  };
+
+  const setTextSizeSync = (val) => {
+    setTextSize(val);
+    if (selectedIdx !== null) {
+      setAnnsH(prev => {
+        const list = [...(prev[currentPage] || [])];
+        if (list[selectedIdx] && list[selectedIdx].type === 'text') {
+          list[selectedIdx] = { ...list[selectedIdx], fontSize: val };
+        }
+        return { ...prev, [currentPage]: list };
+      });
+    }
+  };
+
+  const setSelectedFontSync = (val) => {
+    setSelectedFont(val);
+    if (selectedIdx !== null) {
+      setAnnsH(prev => {
+        const list = [...(prev[currentPage] || [])];
+        if (list[selectedIdx] && list[selectedIdx].type === 'text') {
+          const resolved = val === 'auto'
+            ? (list[selectedIdx].detectedFont || '"Times New Roman", serif')
+            : (FONT_OPTIONS.find(f => f.id === val)?.css || '"Times New Roman", serif');
+          list[selectedIdx] = { ...list[selectedIdx], fontFamily: resolved };
+        }
+        return { ...prev, [currentPage]: list };
+      });
+    }
+  };
+
+  const setTextBoldSync = (val) => {
+    setTextBold(val);
+    if (selectedIdx !== null) {
+      setAnnsH(prev => {
+        const list = [...(prev[currentPage] || [])];
+        if (list[selectedIdx] && list[selectedIdx].type === 'text') {
+          list[selectedIdx] = { ...list[selectedIdx], fontWeight: val ? 700 : 400 };
+        }
+        return { ...prev, [currentPage]: list };
+      });
+    }
+  };
+
+  const setTextItalicSync = (val) => {
+    setTextItalic(val);
+    if (selectedIdx !== null) {
+      setAnnsH(prev => {
+        const list = [...(prev[currentPage] || [])];
+        if (list[selectedIdx] && list[selectedIdx].type === 'text') {
+          list[selectedIdx] = { ...list[selectedIdx], fontStyle: val ? 'italic' : 'normal' };
+        }
+        return { ...prev, [currentPage]: list };
+      });
+    }
+  };
 
   const undo = useCallback(() => {
     if (historyIdx <= 0) return;
@@ -492,8 +670,12 @@ export default function PdfEditor({ onBack, tool }) {
     try {
       const pdfjsLib = await getPdfjsLib();
       const bytes = await f.arrayBuffer();
-      setPdfBytes(new Uint8Array(bytes));
-      const doc = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+      const u8 = new Uint8Array(bytes);
+      pdfBytesRef.current = u8;
+      setPdfBytes(u8);
+      
+      const clonedU8 = new Uint8Array(bytes.slice(0));
+      const doc = await pdfjsLib.getDocument({ data: clonedU8 }).promise;
       setPdfDoc(doc);
       setTotalPages(doc.numPages);
       pushHistory({});
@@ -541,6 +723,8 @@ export default function PdfEditor({ onBack, tool }) {
         const vp = page.getViewport({ scale: renderScale });
         const tc = await page.getTextContent();
         if (cancelled) return;
+        // tc.styles maps fontName -> { fontFamily, ascent, descent, vertical }
+        const styles = tc.styles || {};
         const items = tc.items
           .filter(it => it.str && it.str.trim())
           .map(it => {
@@ -551,11 +735,21 @@ export default function PdfEditor({ onBack, tool }) {
             const width = it.width * renderScale;
             const height = it.height * renderScale;
             const fn = it.fontName || '';
+            // Use PDF.js styles for actual font family when available
+            const styleInfo = styles[fn];
+            const actualFamily = styleInfo?.fontFamily || '';
+            const detFont = actualFamily
+              ? detectFontFamily(actualFamily)
+              : detectFontFamily(fn);
+            const isBoldFromName = /bold/i.test(fn) || /bold/i.test(actualFamily);
+            const isItalicFromName = /italic|oblique/i.test(fn) || /italic|oblique/i.test(actualFamily);
             return {
               str: it.str, x, y, width, height, fontSize,
               fontName: fn,
-              isBold: /bold/i.test(fn),
-              isItalic: /italic|oblique/i.test(fn),
+              actualFamily,
+              detectedFont: detFont,
+              isBold: isBoldFromName,
+              isItalic: isItalicFromName,
               baseline: y,
             };
           });
@@ -625,6 +819,7 @@ export default function PdfEditor({ onBack, tool }) {
       height: maxHeight,
       fontSize: hitItem.fontSize,
       fontName: hitItem.fontName,
+      detectedFont: hitItem.detectedFont,
       isBold: hitItem.isBold,
       isItalic: hitItem.isItalic,
       baseline: hitItem.baseline,
@@ -756,6 +951,14 @@ export default function PdfEditor({ onBack, tool }) {
 
     const drawAnn = (ann) => {
       ctx.save();
+      if (ann.rotation) {
+        const b = getBounds(ann);
+        const cx = b.x + b.w / 2;
+        const cy = b.y + b.h / 2;
+        ctx.translate(cx, cy);
+        ctx.rotate(ann.rotation);
+        ctx.translate(-cx, -cy);
+      }
       ctx.strokeStyle = ann.color;
       ctx.fillStyle = ann.color;
       ctx.lineWidth = ann.strokeWidth || 3;
@@ -813,13 +1016,14 @@ export default function PdfEditor({ onBack, tool }) {
         // Draw whiteout rectangle first if present
         if (ann.whiteout) {
           ctx.save();
-          ctx.fillStyle = '#ffffff';
+          ctx.fillStyle = ann.whiteout.bgColor || '#ffffff';
           ctx.fillRect(ann.whiteout.x, ann.whiteout.y, ann.whiteout.w, ann.whiteout.h);
           ctx.restore();
         }
         const wt = ann.fontWeight || 400;
         const st = ann.fontStyle === 'italic' ? 'italic ' : '';
-        ctx.font = `${st}${wt} ${ann.fontSize}px "Space Grotesk", sans-serif`;
+        const ff = ann.fontFamily || '"Times New Roman", serif';
+        ctx.font = `${st}${wt} ${ann.fontSize}px ${ff}`;
         ctx.fillStyle = ann.color;
         const lines = (ann.text || '').split('\n');
         const lh = ann.fontSize * 1.25;
@@ -836,7 +1040,7 @@ export default function PdfEditor({ onBack, tool }) {
         // Still draw whiteout to hide original PDF text while editing
         if (ann.whiteout) {
           ctx.save();
-          ctx.fillStyle = '#ffffff';
+          ctx.fillStyle = ann.whiteout.bgColor || '#ffffff';
           ctx.fillRect(ann.whiteout.x, ann.whiteout.y, ann.whiteout.w, ann.whiteout.h);
           ctx.restore();
         }
@@ -847,6 +1051,14 @@ export default function PdfEditor({ onBack, tool }) {
       // Selection outline
       if (selectedIdx === idx) {
         ctx.save();
+        if (ann.rotation) {
+          const b_temp = getBounds(ann);
+          const cx = b_temp.x + b_temp.w / 2;
+          const cy = b_temp.y + b_temp.h / 2;
+          ctx.translate(cx, cy);
+          ctx.rotate(ann.rotation);
+          ctx.translate(-cx, -cy);
+        }
         const b = getBounds(ann);
         ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--cat-edit').trim() || '#6b21a8';
         ctx.lineWidth = 1.5;
@@ -859,8 +1071,21 @@ export default function PdfEditor({ onBack, tool }) {
           [b.x - 4, b.y + b.h], [b.x + b.w, b.y + b.h],
         ];
         for (const [cx, cy] of corners) {
-          ctx.fillRect(cx - 1, cy - 1, 6, 6);
+          ctx.fillRect(cx - 2, cy - 2, 8, 8);
         }
+
+        // Rotation handle
+        const rx = b.x + b.w / 2;
+        const ry = b.y - 20;
+        ctx.beginPath();
+        ctx.moveTo(rx, b.y - 4);
+        ctx.lineTo(rx, ry);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(rx, ry, 5, 0, 2 * Math.PI);
+        ctx.fill();
+
         ctx.restore();
       }
     });
@@ -995,13 +1220,45 @@ export default function PdfEditor({ onBack, tool }) {
     const pos = getPos(e);
 
     if (activeTool === 'select') {
+      // First check if clicking on a handle of the currently selected annotation
+      if (selectedIdx !== null && pageAnns[selectedIdx]) {
+        const ann = pageAnns[selectedIdx];
+        const handle = getHandleAt(ann, pos.x, pos.y);
+        if (handle) {
+          setResizeDirection(handle);
+          setDraggingIdx(selectedIdx);
+          const b = getBounds(ann);
+          resizeStartRef.current = {
+            pos,
+            ann: JSON.parse(JSON.stringify(ann)),
+            bounds: b,
+            center: { x: b.x + b.w / 2, y: b.y + b.h / 2 }
+          };
+          overlayRef.current?.setPointerCapture?.(e.pointerId);
+          return;
+        }
+      }
+
       for (let i = pageAnns.length - 1; i >= 0; i--) {
         if (hitTest(pageAnns[i], pos.x, pos.y)) {
+          const ann = pageAnns[i];
           setSelectedIdx(i);
           setDraggingIdx(i);
-          const b = getBounds(pageAnns[i]);
+          const b = getBounds(ann);
           setDragOffset({ x: pos.x - b.x, y: pos.y - b.y });
           overlayRef.current?.setPointerCapture?.(e.pointerId);
+
+          // Synchronize sidebar properties
+          if (ann.color) setStrokeColor(ann.color);
+          if (ann.strokeWidth) setStrokeWidth(ann.strokeWidth);
+          if (ann.type === 'text') {
+            if (ann.fontSize) setTextSize(ann.fontSize);
+            setTextBold(ann.fontWeight >= 700);
+            setTextItalic(ann.fontStyle === 'italic');
+            const matchFontOption = FONT_OPTIONS.find(f => f.css === ann.fontFamily);
+            if (matchFontOption) setSelectedFont(matchFontOption.id);
+            else setSelectedFont('auto');
+          }
           return;
         }
       }
@@ -1064,6 +1321,7 @@ export default function PdfEditor({ onBack, tool }) {
           matchedBold: hit.isBold,
           matchedItalic: hit.isItalic,
           matchedColor: sampledColor,
+          matchedFont: hit.detectedFont,
           pdfTextItem: hit,
           clickX: pos.x,
         });
@@ -1081,7 +1339,11 @@ export default function PdfEditor({ onBack, tool }) {
       const sx = g.v.length > 0 ? g.v[0] : pos.x;
       const sy = g.h.length > 0 ? g.h[0] : pos.y;
       setGuides(g);
-      setEditingText({ x: sx, y: sy, value: '' });
+      setEditingText({
+        x: sx, y: sy, value: '',
+        matchedBold: textBold,
+        matchedItalic: textItalic,
+      });
       setSelectedIdx(null);
       setTimeout(() => textInputRef.current?.focus(), 30);
       return;
@@ -1123,24 +1385,96 @@ export default function PdfEditor({ onBack, tool }) {
     }
 
     // Dragging annotation
+    // Dragging / Resizing / Rotating annotation
     if (draggingIdx !== null) {
       const pos = getPos(e);
-      const targetX = pos.x - dragOffset.x;
-      const targetY = pos.y - dragOffset.y;
-      const g = computeGuides(targetX, targetY);
-      setGuides(g);
+      if (resizeDirection) {
+        const start = resizeStartRef.current;
+        if (!start) return;
+        const ann = start.ann;
+        const dx = pos.x - start.pos.x;
+        const dy = pos.y - start.pos.y;
+        
+        let nextAnn = { ...ann };
+        
+        if (resizeDirection === 'rotate') {
+          const startAngle = Math.atan2(start.pos.y - start.center.y, start.pos.x - start.center.x);
+          const currentAngle = Math.atan2(pos.y - start.center.y, pos.x - start.center.x);
+          const diff = currentAngle - startAngle;
+          nextAnn.rotation = (ann.rotation || 0) + diff;
+        } else {
+          if (ann.type === 'rect' || ann.type === 'circle') {
+            let x = start.ann.x;
+            let y = start.ann.y;
+            let w = start.ann.w;
+            let h = start.ann.h;
+            
+            if (resizeDirection === 'nw') {
+              x = start.ann.x + dx;
+              y = start.ann.y + dy;
+              w = start.ann.w - dx;
+              h = start.ann.h - dy;
+            } else if (resizeDirection === 'ne') {
+              y = start.ann.y + dy;
+              w = start.ann.w + dx;
+              h = start.ann.h - dy;
+            } else if (resizeDirection === 'sw') {
+              x = start.ann.x + dx;
+              w = start.ann.w - dx;
+              h = start.ann.h + dy;
+            } else if (resizeDirection === 'se') {
+              w = start.ann.w + dx;
+              h = start.ann.h + dy;
+            }
+            nextAnn.x = x;
+            nextAnn.y = y;
+            nextAnn.w = w;
+            nextAnn.h = h;
+          } else if (ann.type === 'text') {
+            const scale = 1 + (resizeDirection.includes('e') ? dx : -dx) / Math.max(10, start.bounds.w);
+            const nextFs = Math.max(8, Math.min(120, Math.round(start.ann.fontSize * scale)));
+            nextAnn.fontSize = nextFs;
+          } else if (ann.type === 'line' || ann.type === 'arrow') {
+            if (resizeDirection === 'nw' || resizeDirection === 'sw') {
+              nextAnn.x1 = start.ann.x1 + dx;
+              nextAnn.y1 = start.ann.y1 + dy;
+            } else {
+              nextAnn.x2 = start.ann.x2 + dx;
+              nextAnn.y2 = start.ann.y2 + dy;
+            }
+          } else if (ann.type === 'path' || ann.type === 'highlight') {
+            const scaleX = 1 + dx / Math.max(10, start.bounds.w);
+            const scaleY = 1 + dy / Math.max(10, start.bounds.h);
+            nextAnn.points = start.ann.points.map(p => ({
+              x: start.bounds.x + (p.x - start.bounds.x) * scaleX,
+              y: start.bounds.y + (p.y - start.bounds.y) * scaleY
+            }));
+          }
+        }
+        
+        setAnnotations(prev => {
+          const list = [...(prev[currentPage] || [])];
+          list[draggingIdx] = nextAnn;
+          return { ...prev, [currentPage]: list };
+        });
+      } else {
+        const targetX = pos.x - dragOffset.x;
+        const targetY = pos.y - dragOffset.y;
+        const g = computeGuides(targetX, targetY);
+        setGuides(g);
 
-      setAnnotations(prev => {
-        const list = [...(prev[currentPage] || [])];
-        const ann = list[draggingIdx];
-        const b = getBounds(ann);
-        let nx = pos.x - dragOffset.x;
-        let ny = pos.y - dragOffset.y;
-        if (g.v.length > 0) nx = g.v[0];
-        if (g.h.length > 0) ny = g.h[0];
-        list[draggingIdx] = moveAnn(ann, nx - b.x, ny - b.y);
-        return { ...prev, [currentPage]: list };
-      });
+        setAnnotations(prev => {
+          const list = [...(prev[currentPage] || [])];
+          const ann = list[draggingIdx];
+          const b = getBounds(ann);
+          let nx = pos.x - dragOffset.x;
+          let ny = pos.y - dragOffset.y;
+          if (g.v.length > 0) nx = g.v[0];
+          if (g.h.length > 0) ny = g.h[0];
+          list[draggingIdx] = moveAnn(ann, nx - b.x, ny - b.y);
+          return { ...prev, [currentPage]: list };
+        });
+      }
       return;
     }
 
@@ -1159,7 +1493,7 @@ export default function PdfEditor({ onBack, tool }) {
       setShapePreview({ type: 'arrow', x1: shapeStart.x, y1: shapeStart.y, x2: pos.x, y2: pos.y });
     }
   }, [isPanning, draggingIdx, isDrawing, activeTool, shapeStart, getPos, dragOffset,
-      currentPage, computeGuides, editingText, findTextItemAt, hoveredTextItem]);
+      currentPage, computeGuides, editingText, findTextItemAt, hoveredTextItem, resizeDirection]);
 
   const handlePointerUp = useCallback((e) => {
     if (isPanning) {
@@ -1171,6 +1505,8 @@ export default function PdfEditor({ onBack, tool }) {
     if (draggingIdx !== null) {
       setAnnotations(prev => { pushHistory(prev); return prev; });
       setDraggingIdx(null);
+      setResizeDirection(null);
+      resizeStartRef.current = null;
       setGuides({ h: [], v: [] });
       overlayRef.current?.releasePointerCapture?.(e.pointerId);
       return;
@@ -1198,12 +1534,75 @@ export default function PdfEditor({ onBack, tool }) {
     if (!editingText) return;
     setGuides({ h: [], v: [] });
 
+    // Resolve the font family to use
+    const resolvedFont = selectedFont === 'auto'
+      ? (editingText.matchedFont || '"Times New Roman", serif')
+      : (FONT_OPTIONS.find(f => f.id === selectedFont)?.css || '"Times New Roman", serif');
+
+    // Helper to build whiteout with sampled background color
+    const buildWhiteout = (pi) => {
+      let bgColor = '#ffffff';
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext('2d');
+        // Sample background from area around the text (above the text baseline)
+        const sampleY = Math.round(pi.y - pi.height * 0.5);
+        const samplePoints = [
+          [Math.round(pi.x - 5), sampleY],
+          [Math.round(pi.x + pi.width + 5), sampleY],
+          [Math.round(pi.x + pi.width / 2), Math.round(pi.y - pi.height - 3)],
+        ];
+        let totalR = 0, totalG = 0, totalB = 0, count = 0;
+        for (const [sx, sy] of samplePoints) {
+          if (sx >= 0 && sy >= 0 && sx < ctx.canvas.width && sy < ctx.canvas.height) {
+            const pixel = ctx.getImageData(sx, sy, 1, 1).data;
+            // Only use light pixels (background, not text)
+            if (pixel[0] + pixel[1] + pixel[2] > 600) {
+              totalR += pixel[0]; totalG += pixel[1]; totalB += pixel[2];
+              count++;
+            }
+          }
+        }
+        if (count > 0) {
+          bgColor = `rgb(${Math.round(totalR/count)}, ${Math.round(totalG/count)}, ${Math.round(totalB/count)})`;
+        }
+      }
+      return {
+        x: pi.x - 4,
+        y: pi.y - pi.height - 4,
+        w: pi.width + 8,
+        h: pi.height + 10,
+        bgColor,
+      };
+    };
+
     if (editingText.editIdx != null) {
       // Re-editing existing annotation
       if (value.trim()) {
-        updateAnn(editingText.editIdx, { text: value });
+        const fs = editingText.matchedFontSize || textSize;
+        const fw = editingText.matchedBold ? 700 : 400;
+        const fst = editingText.matchedItalic ? 'italic' : 'normal';
+        const color = editingText.matchedColor || strokeColor;
+        updateAnn(editingText.editIdx, {
+          text: value,
+          fontFamily: resolvedFont,
+          fontSize: fs,
+          fontWeight: fw,
+          fontStyle: fst,
+          color,
+        });
       } else {
         deleteAnn(editingText.editIdx);
+      }
+    } else if (editingText.pdfTextItem && !value.trim()) {
+      // User cleared all text from a PDF line → still apply whiteout to erase it
+      if (value !== editingText.originalValue) {
+        const pi = editingText.pdfTextItem;
+        addAnn({
+          type: 'text', x: editingText.x, y: editingText.y,
+          text: '', color: 'transparent', fontSize: editingText.matchedFontSize || textSize,
+          fontWeight: 400, fontStyle: 'normal', fontFamily: resolvedFont,
+          whiteout: buildWhiteout(pi),
+        });
       }
     } else if (value.trim()) {
       // Skip if clicking PDF text and leaving it unchanged
@@ -1218,21 +1617,15 @@ export default function PdfEditor({ onBack, tool }) {
       const annData = {
         type: 'text', x: editingText.x, y: editingText.y,
         text: value, color, fontSize: fs,
-        fontWeight: fw, fontStyle: fst,
+        fontWeight: fw, fontStyle: fst, fontFamily: resolvedFont,
       };
       if (editingText.pdfTextItem) {
-        const pi = editingText.pdfTextItem;
-        annData.whiteout = {
-          x: pi.x - 2,
-          y: pi.y - pi.height - 2,
-          w: pi.width + 4,
-          h: pi.height + 6,
-        };
+        annData.whiteout = buildWhiteout(editingText.pdfTextItem);
       }
       addAnn(annData);
     }
     setEditingText(null);
-  }, [editingText, updateAnn, deleteAnn, addAnn, strokeColor, textSize]);
+  }, [editingText, updateAnn, deleteAnn, addAnn, strokeColor, textSize, selectedFont]);
 
   /* Double click to re-edit text */
   const handleDoubleClick = useCallback((e) => {
@@ -1245,6 +1638,7 @@ export default function PdfEditor({ onBack, tool }) {
           matchedFontSize: ann.fontSize,
           matchedBold: ann.fontWeight >= 700,
           matchedItalic: ann.fontStyle === 'italic',
+          matchedFont: ann.fontFamily,
           clickX: pos.x,
         });
         setSelectedIdx(null);
@@ -1366,13 +1760,41 @@ export default function PdfEditor({ onBack, tool }) {
      Export PDF
      ================================================================ */
   const exportPdf = async () => {
-    if (!pdfBytes) return;
+    let bytesToLoad = pdfBytesRef.current || pdfBytes;
+    const isDetached = bytesToLoad && (bytesToLoad.byteLength === 0 || bytesToLoad.buffer?.byteLength === 0);
+    if ((!bytesToLoad || isDetached) && file) {
+      try {
+        const arr = await file.arrayBuffer();
+        bytesToLoad = new Uint8Array(arr);
+        pdfBytesRef.current = bytesToLoad;
+      } catch (err) {
+        console.error('Failed to reload file arrayBuffer:', err);
+      }
+    }
+    if (!bytesToLoad) return;
+    
+    // Strip any React proxy wrapper by creating a clean Uint8Array copy
+    const cleanBytes = new Uint8Array(bytesToLoad);
+    
     setProcessing(true);
     try {
-      const doc = await PDFDocument.load(pdfBytes);
-      const font = await doc.embedFont(StandardFonts.Helvetica);
-      const fontBold = await doc.embedFont(StandardFonts.HelveticaBold);
-      const fontItalic = await doc.embedFont(StandardFonts.HelveticaOblique);
+      const doc = await PDFDocument.load(cleanBytes);
+      // Embed serif, sans-serif, and monospace font families (including all styles)
+      const sansFont = await doc.embedFont(StandardFonts.Helvetica);
+      const sansBold = await doc.embedFont(StandardFonts.HelveticaBold);
+      const sansItalic = await doc.embedFont(StandardFonts.HelveticaOblique);
+      const sansBoldItalic = await doc.embedFont(StandardFonts.HelveticaBoldOblique);
+      
+      const serifFont = await doc.embedFont(StandardFonts.TimesRoman);
+      const serifBold = await doc.embedFont(StandardFonts.TimesRomanBold);
+      const serifItalic = await doc.embedFont(StandardFonts.TimesRomanItalic);
+      const serifBoldItalic = await doc.embedFont(StandardFonts.TimesRomanBoldItalic);
+      
+      const monoFont = await doc.embedFont(StandardFonts.Courier);
+      const monoBold = await doc.embedFont(StandardFonts.CourierBold);
+      const monoItalic = await doc.embedFont(StandardFonts.CourierOblique);
+      const monoBoldItalic = await doc.embedFont(StandardFonts.CourierBoldOblique);
+      
       const pages = doc.getPages();
 
       Object.entries(annotations).forEach(([pageNum, anns]) => {
@@ -1385,19 +1807,49 @@ export default function PdfEditor({ onBack, tool }) {
         anns.forEach(ann => {
           const color = hexToRgb(ann.color);
           const sw = (ann.strokeWidth || 3) * sx;
+          const rot = ann.rotation ? degrees(-(ann.rotation * 180) / Math.PI) : undefined;
 
           if (ann.type === 'text') {
             // Whiteout first
             if (ann.whiteout) {
               const wo = ann.whiteout;
+              // Use sampled bg color or default to white
+              let woColor = rgb(1, 1, 1);
+              if (wo.bgColor && wo.bgColor !== '#ffffff') {
+                const m = wo.bgColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+                if (m) woColor = rgb(+m[1]/255, +m[2]/255, +m[3]/255);
+              }
               page.drawRectangle({
                 x: wo.x * sx,
                 y: height - (wo.y + wo.h) * sy,
                 width: wo.w * sx, height: wo.h * sy,
-                color: rgb(1, 1, 1), borderWidth: 0,
+                color: woColor, borderWidth: 0,
               });
             }
-            const useFont = (ann.fontWeight >= 700) ? fontBold : (ann.fontStyle === 'italic' ? fontItalic : font);
+            // Select font family based on annotation's stored fontFamily
+            const ff = ann.fontFamily || '';
+            const isSerif = /times|georgia|garamond|palatino|serif/i.test(ff) && !/sans/i.test(ff);
+            const isMono = /courier|mono/i.test(ff);
+            let useFont;
+            const isBold = ann.fontWeight >= 700;
+            const isItalic = ann.fontStyle === 'italic';
+
+            if (isMono) {
+              if (isBold && isItalic) useFont = monoBoldItalic;
+              else if (isBold) useFont = monoBold;
+              else if (isItalic) useFont = monoItalic;
+              else useFont = monoFont;
+            } else if (isSerif) {
+              if (isBold && isItalic) useFont = serifBoldItalic;
+              else if (isBold) useFont = serifBold;
+              else if (isItalic) useFont = serifItalic;
+              else useFont = serifFont;
+            } else {
+              if (isBold && isItalic) useFont = sansBoldItalic;
+              else if (isBold) useFont = sansBold;
+              else if (isItalic) useFont = sansItalic;
+              else useFont = sansFont;
+            }
             const lines = (ann.text || '').split('\n');
             const lh = ann.fontSize * 1.25;
             lines.forEach((line, li) => {
@@ -1407,6 +1859,7 @@ export default function PdfEditor({ onBack, tool }) {
                   y: height - (ann.y + li * lh) * sy,
                   size: ann.fontSize * sy,
                   font: useFont, color,
+                  rotate: rot,
                 });
               }
             });
@@ -1433,6 +1886,7 @@ export default function PdfEditor({ onBack, tool }) {
               x: rx, y: ry,
               width: Math.abs(ann.w) * sx, height: Math.abs(ann.h) * sy,
               borderColor: color, borderWidth: sw,
+              rotate: rot,
             });
           } else if (ann.type === 'circle') {
             page.drawEllipse({
@@ -1441,6 +1895,7 @@ export default function PdfEditor({ onBack, tool }) {
               xScale: Math.abs(ann.w) / 2 * sx || 1,
               yScale: Math.abs(ann.h) / 2 * sy || 1,
               borderColor: color, borderWidth: sw,
+              rotate: rot,
             });
           } else if (ann.type === 'line' || ann.type === 'arrow') {
             page.drawLine({
@@ -1575,21 +2030,57 @@ export default function PdfEditor({ onBack, tool }) {
         </div>
 
         {/* Left toolbar */}
-        <div style={S.toolStrip}>
+        <div
+          className="left-toolbar-controls"
+          onPointerDown={() => { isInteractingWithToolbarRef.current = true; }}
+          onPointerUp={() => { setTimeout(() => { isInteractingWithToolbarRef.current = false; }, 100); }}
+          style={S.toolStrip(toolStripWidth)}
+        >
+          {/* Resize handle on right edge */}
+          <div
+            style={{
+              position: 'absolute', top: 0, right: -3, width: 6, height: '100%',
+              cursor: 'col-resize', zIndex: 10,
+            }}
+            onPointerDown={e => {
+              e.preventDefault();
+              toolStripResizing.current = true;
+              const startX = e.clientX;
+              const startW = toolStripWidth;
+              const onMove = (me) => {
+                if (!toolStripResizing.current) return;
+                const newW = Math.max(44, Math.min(180, startW + (me.clientX - startX)));
+                setToolStripWidth(newW);
+              };
+              const onUp = () => {
+                toolStripResizing.current = false;
+                window.removeEventListener('pointermove', onMove);
+                window.removeEventListener('pointerup', onUp);
+              };
+              window.addEventListener('pointermove', onMove);
+              window.addEventListener('pointerup', onUp);
+            }}
+          />
           {TOOL_DEFS.map((t, i) => {
             const prevGroup = i > 0 ? TOOL_DEFS[i - 1].group : t.group;
+            const isWide = toolStripWidth > 85;
             return (
-              <div key={t.id}>
-                {i > 0 && t.group !== prevGroup && <div style={S.toolDivider} />}
+              <div key={t.id} style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                {i > 0 && t.group !== prevGroup && <div style={{ ...S.toolDivider, width: isWide ? '85%' : 22 }} />}
                 <button
-                  style={S.toolBtn(activeTool === t.id)}
+                  style={S.toolBtn(activeTool === t.id, toolStripWidth)}
                   onClick={() => { setActiveTool(t.id); setSelectedIdx(null); }}
                   onMouseEnter={() => setHoveredTool(t.id)}
                   onMouseLeave={() => setHoveredTool(null)}
                   title={`${t.label} (${t.shortcut})`}
                 >
-                  {t.icon}
-                  {hoveredTool === t.id && (
+                  <span style={{ fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{t.icon}</span>
+                  {isWide && (
+                    <span style={{ fontSize: 11, fontWeight: 500, color: activeTool === t.id ? 'var(--cat-edit)' : 'var(--sketch-text)' }}>
+                      {t.label}
+                    </span>
+                  )}
+                  {!isWide && hoveredTool === t.id && (
                     <span style={{ ...S.tooltip, opacity: 1 }}>
                       {t.label} <span style={{ opacity: 0.5 }}>{t.shortcut}</span>
                     </span>
@@ -1599,40 +2090,240 @@ export default function PdfEditor({ onBack, tool }) {
             );
           })}
 
-          <div style={S.toolDivider} />
+          <div style={{ ...S.toolDivider, width: toolStripWidth > 85 ? '85%' : 22 }} />
 
-          {/* Color swatches */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, padding: '0 4px', justifyContent: 'center' }}>
-            {COLORS.map(c => (
-              <button key={c} style={S.colorBtn(c, strokeColor === c)}
-                onClick={() => setStrokeColor(c)} title={c} />
-            ))}
+          {/* Figma-style custom color picker */}
+          <div style={{
+            display: 'flex',
+            flexDirection: toolStripWidth > 85 ? 'row' : 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            padding: '0 4px',
+            width: '100%',
+          }}>
+            {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>COLOR</span>}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: toolStripWidth > 85 ? 'var(--bg2)' : 'transparent',
+              padding: toolStripWidth > 85 ? '3px 6px' : 0,
+              borderRadius: 6,
+              border: toolStripWidth > 85 ? '1px solid var(--border)' : 'none',
+              cursor: 'pointer',
+              position: 'relative',
+              boxShadow: toolStripWidth > 85 ? 'inset 0 1px 2px rgba(0,0,0,0.04)' : 'none',
+            }} title="Select Custom Color">
+              {/* Color Circle */}
+              <div style={{
+                width: 16, height: 16,
+                borderRadius: '50%',
+                background: strokeColor,
+                border: '1.5px solid var(--border)',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                flexShrink: 0,
+              }} />
+              
+              {/* Hex Code Input (Visible only if wide) */}
+              {toolStripWidth > 85 && (
+                <span style={{
+                  fontSize: 10,
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--sketch-text)',
+                  textTransform: 'uppercase',
+                  userSelect: 'none',
+                  letterSpacing: '0.02em',
+                }}>
+                  {strokeColor}
+                </span>
+              )}
+
+              {/* Hidden native Color Picker */}
+              <input
+                type="color"
+                value={strokeColor.startsWith('#') ? strokeColor : '#1a1a1a'}
+                onChange={e => {
+                  const val = e.target.value;
+                  if (editingText) {
+                    setEditingText(prev => ({ ...prev, matchedColor: val }));
+                  }
+                  setStrokeColorSync(val);
+                }}
+                style={{
+                  position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                  border: 'none', padding: 0, opacity: 0, cursor: 'pointer',
+                }}
+              />
+            </div>
           </div>
 
-          <div style={S.toolDivider} />
-
-          {/* Stroke size */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, padding: '0 3px' }}>
-            <span style={{ fontSize: 7, fontFamily: 'var(--font-sans)', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>size</span>
-            <input type="range" min={1} max={16} value={strokeWidth}
-              onChange={e => setStrokeWidth(Number(e.target.value))}
-              style={{ width: 32, writingMode: 'vertical-lr', direction: 'rtl', height: 48, accentColor: 'var(--cat-edit)' }} />
-            <span style={{ fontSize: 8, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>{strokeWidth}</span>
-          </div>
+          {['draw', 'highlight', 'rect', 'circle', 'line', 'arrow'].includes(activeTool) && (
+            <>
+              <div style={{ ...S.toolDivider, width: toolStripWidth > 85 ? '85%' : 22 }} />
+              {/* Stroke size */}
+              <div style={{
+                display: 'flex',
+                flexDirection: toolStripWidth > 85 ? 'row' : 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                padding: '0 4px',
+                width: '100%',
+              }}>
+                {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>PEN</span>}
+                <input type="range" min={1} max={16} value={strokeWidth}
+                  onChange={e => setStrokeWidthSync(Number(e.target.value))}
+                  style={{
+                    width: toolStripWidth > 85 ? '50%' : 30,
+                    height: 18,
+                    accentColor: 'var(--cat-edit)',
+                    cursor: 'pointer',
+                  }}
+                  title="Pen Stroke Size"
+                />
+                <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>{strokeWidth}</span>
+              </div>
+            </>
+          )}
 
           {activeTool === 'text' && (
             <>
-              <div style={S.toolDivider} />
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-                <span style={{ fontSize: 7, fontFamily: 'var(--font-sans)', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>font</span>
-                <input type="number" min={8} max={72} value={textSize}
-                  onChange={e => setTextSize(Number(e.target.value))}
+              <div style={{ ...S.toolDivider, width: toolStripWidth > 85 ? '85%' : 22 }} />
+              {/* Text Size */}
+              <div style={{
+                display: 'flex',
+                flexDirection: toolStripWidth > 85 ? 'row' : 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                padding: '0 4px',
+                width: '100%',
+              }}>
+                {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>SIZE</span>}
+                <input type="range" min={8} max={72} value={textSize}
+                  onChange={e => {
+                    const val = Number(e.target.value);
+                    if (editingText) {
+                      setEditingText(prev => ({ ...prev, matchedFontSize: val }));
+                    }
+                    setTextSizeSync(val);
+                  }}
                   style={{
-                    width: 32, textAlign: 'center', fontSize: 9, padding: '2px',
+                    width: toolStripWidth > 85 ? '50%' : 30,
+                    height: 18,
+                    accentColor: 'var(--cat-edit)',
+                    cursor: 'pointer',
+                  }}
+                  title="Font Size"
+                />
+                <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>{textSize}</span>
+              </div>
+              
+              {/* Font Family */}
+              <div style={{
+                display: 'flex',
+                flexDirection: toolStripWidth > 85 ? 'row' : 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+                padding: '0 4px',
+                width: '100%',
+                marginTop: 2,
+              }}>
+                {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>FONT</span>}
+                <select value={selectedFont}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setSelectedFontSync(val);
+                  }}
+                  style={{
+                    width: toolStripWidth > 85 ? '65%' : 38,
+                    fontSize: 8, padding: '2px 1px',
                     border: '1px solid var(--border)', borderRadius: 3,
                     background: 'var(--surface)', color: 'var(--sketch-text)',
-                    fontFamily: 'var(--font-mono)',
-                  }} />
+                    fontFamily: 'var(--font-sans)', cursor: 'pointer',
+                    textOverflow: 'ellipsis',
+                  }}>
+                  {FONT_OPTIONS.map(f => {
+                    let label = f.label;
+                    if (f.id === 'auto' && editingText) {
+                      const resolved = editingText.matchedFont || '"Times New Roman", serif';
+                      const isSerif = /times|georgia|garamond|palatino|serif/i.test(resolved) && !/sans/i.test(resolved);
+                      const isMono = /courier|mono/i.test(resolved);
+                      const displayFamily = isMono ? 'Mono' : (isSerif ? 'Serif' : 'Sans');
+                      label = `Auto (${displayFamily})`;
+                    }
+                    return (
+                      <option key={f.id} value={f.id} style={{ fontFamily: f.css !== 'auto' ? f.css : undefined }}>
+                        {label}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {/* Bold & Italic Toggles */}
+              <div style={{
+                display: 'flex',
+                flexDirection: toolStripWidth > 85 ? 'row' : 'column',
+                gap: 4,
+                justifyContent: 'center',
+                alignItems: 'center',
+                width: '100%',
+                marginTop: 6,
+              }}>
+                {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', marginRight: 2 }}>STYLE</span>}
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button
+                    onClick={() => {
+                      const nextVal = !(editingText ? editingText.matchedBold : textBold);
+                      if (editingText) {
+                        setEditingText(prev => ({ ...prev, matchedBold: nextVal }));
+                      }
+                      setTextBoldSync(nextVal);
+                    }}
+                    style={{
+                      width: 24, height: 24,
+                      borderRadius: 4,
+                      border: '1px solid var(--border)',
+                      background: (editingText ? editingText.matchedBold : textBold) ? 'var(--cat-edit-bg)' : 'var(--surface)',
+                      color: (editingText ? editingText.matchedBold : textBold) ? 'var(--cat-edit)' : 'var(--sketch-text)',
+                      fontFamily: 'var(--font-sans)',
+                      fontWeight: 'bold',
+                      fontSize: 10,
+                      cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                    title="Bold"
+                  >
+                    B
+                  </button>
+                  <button
+                    onClick={() => {
+                      const nextVal = !(editingText ? editingText.matchedItalic : textItalic);
+                      if (editingText) {
+                        setEditingText(prev => ({ ...prev, matchedItalic: nextVal }));
+                      }
+                      setTextItalicSync(nextVal);
+                    }}
+                    style={{
+                      width: 24, height: 24,
+                      borderRadius: 4,
+                      border: '1px solid var(--border)',
+                      background: (editingText ? editingText.matchedItalic : textItalic) ? 'var(--cat-edit-bg)' : 'var(--surface)',
+                      color: (editingText ? editingText.matchedItalic : textItalic) ? 'var(--cat-edit)' : 'var(--sketch-text)',
+                      fontFamily: 'var(--font-sans)',
+                      fontStyle: 'italic',
+                      fontSize: 10,
+                      cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                    title="Italic"
+                  >
+                    I
+                  </button>
+                </div>
               </div>
             </>
           )}
@@ -1660,7 +2351,169 @@ export default function PdfEditor({ onBack, tool }) {
                 const isPdfText = !!editingText.pdfTextItem;
                 const fs = editingText.matchedFontSize || textSize;
                 const lineW = isPdfText ? editingText.pdfTextItem.width + 8 : undefined;
+                const resolvedFontCSS = selectedFont === 'auto'
+                  ? (editingText.matchedFont || '"Times New Roman", serif')
+                  : (FONT_OPTIONS.find(f => f.id === selectedFont)?.css || '"Times New Roman", serif');
+                const floatingBarY = editingText.y - fs - 42;
                 return (
+                <>
+                  {/* Floating formatting bar */}
+                  <div
+                    className="formatting-bar"
+                    onPointerDown={() => { isInteractingWithToolbarRef.current = true; }}
+                    onPointerUp={() => { setTimeout(() => { isInteractingWithToolbarRef.current = false; }, 100); }}
+                    style={{
+                      position: 'absolute',
+                      left: editingText.x,
+                      top: floatingBarY,
+                      zIndex: 101,
+                      display: 'flex',
+                      gap: 5,
+                      background: 'var(--surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 6,
+                      padding: '4px 6px',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+                      alignItems: 'center',
+                      pointerEvents: 'auto',
+                    }}>
+                    {/* Font family */}
+                    <select
+                      value={selectedFont}
+                      onChange={e => setSelectedFont(e.target.value)}
+                      style={{
+                        fontSize: 9, padding: '2px 4px',
+                        border: '1px solid var(--border)', borderRadius: 4,
+                        background: 'var(--bg2)', color: 'var(--sketch-text)',
+                        fontFamily: 'var(--font-sans)', cursor: 'pointer',
+                        width: 72, textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {FONT_OPTIONS.map(f => {
+                        let label = f.label;
+                        if (f.id === 'auto') {
+                          const resolved = editingText.matchedFont || '"Times New Roman", serif';
+                          const isSerif = /times|georgia|garamond|palatino|serif/i.test(resolved) && !/sans/i.test(resolved);
+                          const isMono = /courier|mono/i.test(resolved);
+                          const displayFamily = isMono ? 'Mono' : (isSerif ? 'Serif' : 'Sans');
+                          label = `Auto (${displayFamily})`;
+                        }
+                        return (
+                          <option key={f.id} value={f.id}>
+                            {label}
+                          </option>
+                        );
+                      })}
+                    </select>
+
+                    {/* Font size adjustment */}
+                    <button
+                      onClick={() => {
+                        const cur = editingText.matchedFontSize || textSize;
+                        const next = Math.max(8, cur - 1);
+                        setEditingText(prev => ({ ...prev, matchedFontSize: next }));
+                        setTextSize(next);
+                      }}
+                      style={{ border: 'none', background: 'none', fontSize: 11, cursor: 'pointer', color: 'var(--sketch-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: 3 }}
+                      onMouseEnter={e => e.target.style.background = 'var(--bg2)'}
+                      onMouseLeave={e => e.target.style.background = 'none'}
+                    >
+                      A-
+                    </button>
+                    <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', minWidth: 16, textAlign: 'center', color: 'var(--sketch-text)' }}>
+                      {editingText.matchedFontSize || textSize}
+                    </span>
+                    <button
+                      onClick={() => {
+                        const cur = editingText.matchedFontSize || textSize;
+                        const next = Math.min(72, cur + 1);
+                        setEditingText(prev => ({ ...prev, matchedFontSize: next }));
+                        setTextSize(next);
+                      }}
+                      style={{ border: 'none', background: 'none', fontSize: 11, cursor: 'pointer', color: 'var(--sketch-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: 3 }}
+                      onMouseEnter={e => e.target.style.background = 'var(--bg2)'}
+                      onMouseLeave={e => e.target.style.background = 'none'}
+                    >
+                      A+
+                    </button>
+
+                    <div style={{ width: 1, height: 12, background: 'var(--border)' }} />
+
+                    {/* Bold Toggle */}
+                    <button
+                      onClick={() => {
+                        setEditingText(prev => ({ ...prev, matchedBold: !prev.matchedBold }));
+                      }}
+                      style={{
+                        width: 18, height: 18, borderRadius: 3, border: 'none',
+                        background: editingText.matchedBold ? 'var(--cat-edit-bg)' : 'none',
+                        color: editingText.matchedBold ? 'var(--cat-edit)' : 'var(--sketch-text)',
+                        fontWeight: 'bold', fontSize: 10, cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      }}
+                    >
+                      B
+                    </button>
+
+                    {/* Italic Toggle */}
+                    <button
+                      onClick={() => {
+                        setEditingText(prev => ({ ...prev, matchedItalic: !prev.matchedItalic }));
+                      }}
+                      style={{
+                        width: 18, height: 18, borderRadius: 3, border: 'none',
+                        background: editingText.matchedItalic ? 'var(--cat-edit-bg)' : 'none',
+                        color: editingText.matchedItalic ? 'var(--cat-edit)' : 'var(--sketch-text)',
+                        fontStyle: 'italic', fontSize: 10, cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      }}
+                    >
+                      I
+                    </button>
+
+                    <div style={{ width: 1, height: 12, background: 'var(--border)' }} />
+
+                    {/* Color indicator / selector */}
+                    <div style={{
+                      position: 'relative',
+                      width: 14, height: 14,
+                      borderRadius: '50%',
+                      border: '1px solid var(--border)',
+                      background: editingText.matchedColor || strokeColor,
+                      cursor: 'pointer',
+                    }} title="Text Color">
+                      <input
+                        type="color"
+                        value={editingText.matchedColor || strokeColor}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setEditingText(prev => ({ ...prev, matchedColor: val }));
+                          setStrokeColor(val);
+                        }}
+                        style={{
+                          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                          border: 'none', padding: 0, opacity: 0, cursor: 'pointer',
+                        }}
+                      />
+                    </div>
+
+                    <div style={{ width: 1, height: 12, background: 'var(--border)' }} />
+
+                    {/* Save Button */}
+                    <button
+                      onClick={() => {
+                        commitText();
+                      }}
+                      style={{
+                        border: 'none', background: 'var(--cat-edit)', color: '#fff',
+                        borderRadius: 3, fontSize: 8, padding: '2px 5px', fontWeight: 600,
+                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2,
+                      }}
+                    >
+                      ✓ Save
+                    </button>
+                  </div>
+
                 <textarea
                   ref={el => {
                     textInputRef.current = el;
@@ -1674,7 +2527,7 @@ export default function PdfEditor({ onBack, tool }) {
                         const mc = document.createElement('canvas').getContext('2d');
                         const wt = isBold ? 700 : 400;
                         const st = editingText.matchedItalic ? 'italic ' : '';
-                        mc.font = `${st}${wt} ${fs}px "Space Grotesk", sans-serif`;
+                        mc.font = `${st}${wt} ${fs}px ${resolvedFontCSS}`;
                         let cursorIdx = text.length;
                         for (let i = 0; i < text.length; i++) {
                           const w = mc.measureText(text.substring(0, i + 1)).width;
@@ -1716,7 +2569,7 @@ export default function PdfEditor({ onBack, tool }) {
                     left: editingText.x,
                     top: editingText.y - fs,
                     fontSize: fs,
-                    fontFamily: '"Space Grotesk", sans-serif',
+                    fontFamily: resolvedFontCSS,
                     fontWeight: editingText.matchedBold ? 700 : 400,
                     fontStyle: editingText.matchedItalic ? 'italic' : 'normal',
                     color: editingText.matchedColor
@@ -1764,12 +2617,19 @@ export default function PdfEditor({ onBack, tool }) {
                   onBlur={e => {
                     const val = e.target.value;
                     setTimeout(() => {
-                      if (document.activeElement !== textInputRef.current) commitText(val);
-                    }, 80);
+                      if (isInteractingWithToolbarRef.current) {
+                        textInputRef.current?.focus();
+                        return;
+                      }
+                      if (document.activeElement !== textInputRef.current) {
+                        commitText(val);
+                      }
+                    }, 150);
                   }}
                   onPointerDown={e => e.stopPropagation()}
                   onClick={e => e.stopPropagation()}
                 />
+                </>
                 );
               })()}
             </div>
@@ -1798,7 +2658,25 @@ export default function PdfEditor({ onBack, tool }) {
                       const idx = pageAnns.length - 1 - ri;
                       return (
                         <div key={ann.id || idx} style={S.layerItem(selectedIdx === idx)}
-                          onClick={() => { setSelectedIdx(idx); setActiveTool('select'); }}>
+                          onClick={() => {
+                            setSelectedIdx(idx);
+                            setActiveTool('select');
+                            
+                            // Synchronize sidebar properties
+                            const selectedAnn = pageAnns[idx];
+                            if (selectedAnn) {
+                              if (selectedAnn.color) setStrokeColor(selectedAnn.color);
+                              if (selectedAnn.strokeWidth) setStrokeWidth(selectedAnn.strokeWidth);
+                              if (selectedAnn.type === 'text') {
+                                if (selectedAnn.fontSize) setTextSize(selectedAnn.fontSize);
+                                setTextBold(selectedAnn.fontWeight >= 700);
+                                setTextItalic(selectedAnn.fontStyle === 'italic');
+                                const matchFontOption = FONT_OPTIONS.find(f => f.css === selectedAnn.fontFamily);
+                                if (matchFontOption) setSelectedFont(matchFontOption.id);
+                                else setSelectedFont('auto');
+                              }
+                            }
+                          }}>
                           <span style={S.layerIcon}>{TYPE_ICONS[ann.type] || '?'}</span>
                           <span style={S.layerDot(ann.color)} />
                           <span style={S.layerName}>
