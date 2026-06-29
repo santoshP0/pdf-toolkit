@@ -565,15 +565,70 @@ export default function PdfEditor({ onBack, tool }) {
     return () => { cancelled = true; };
   }, [pdfDoc, currentPage, renderScale]);
 
-  /* Find PDF text item at click position */
+  /* Find PDF text item at click position — merges all chunks on the same line */
   const findTextItemAt = useCallback((px, py) => {
+    // First try exact hit on a chunk
+    let hitItem = null;
     for (const item of pdfTextItems) {
       if (px >= item.x - 4 && px <= item.x + item.width + 4 &&
           py >= item.y - item.height - 4 && py <= item.y + 4) {
-        return item;
+        hitItem = item;
+        break;
       }
     }
-    return null;
+
+    // If no exact hit, find nearest chunk whose vertical range contains click y
+    if (!hitItem) {
+      let bestDist = Infinity;
+      for (const item of pdfTextItems) {
+        const yTop = item.y - item.height - 4;
+        const yBot = item.y + 4;
+        if (py >= yTop && py <= yBot) {
+          const cx = item.x + item.width / 2;
+          const dist = Math.abs(px - cx);
+          if (dist < bestDist && dist < item.width * 3) {
+            bestDist = dist;
+            hitItem = item;
+          }
+        }
+      }
+    }
+    if (!hitItem) return null;
+
+    // Gather all chunks on same baseline (within tolerance)
+    const tolerance = hitItem.fontSize * 0.5;
+    const lineItems = pdfTextItems.filter(it =>
+      Math.abs(it.baseline - hitItem.baseline) < tolerance
+    );
+    lineItems.sort((a, b) => a.x - b.x);
+
+    // Merge with proper spacing — add space between chunks that have gaps
+    let mergedStr = '';
+    for (let i = 0; i < lineItems.length; i++) {
+      if (i > 0) {
+        const prev = lineItems[i - 1];
+        const gap = lineItems[i].x - (prev.x + prev.width);
+        // Add space if there's a gap between chunks (> 1px)
+        if (gap > 1) mergedStr += ' ';
+      }
+      mergedStr += lineItems[i].str;
+    }
+
+    const minX = Math.min(...lineItems.map(it => it.x));
+    const maxRight = Math.max(...lineItems.map(it => it.x + it.width));
+    const maxHeight = Math.max(...lineItems.map(it => it.height));
+    return {
+      str: mergedStr,
+      x: minX,
+      y: hitItem.y,
+      width: maxRight - minX,
+      height: maxHeight,
+      fontSize: hitItem.fontSize,
+      fontName: hitItem.fontName,
+      isBold: hitItem.isBold,
+      isItalic: hitItem.isItalic,
+      baseline: hitItem.baseline,
+    };
   }, [pdfTextItems]);
 
   /* Find nearest text item for font matching */
@@ -762,7 +817,7 @@ export default function PdfEditor({ onBack, tool }) {
           ctx.fillRect(ann.whiteout.x, ann.whiteout.y, ann.whiteout.w, ann.whiteout.h);
           ctx.restore();
         }
-        const wt = ann.fontWeight || 600;
+        const wt = ann.fontWeight || 400;
         const st = ann.fontStyle === 'italic' ? 'italic ' : '';
         ctx.font = `${st}${wt} ${ann.fontSize}px "Space Grotesk", sans-serif`;
         ctx.fillStyle = ann.color;
@@ -777,7 +832,16 @@ export default function PdfEditor({ onBack, tool }) {
 
     // Draw all annotations
     pageAnns.forEach((ann, idx) => {
-      if (editingText?.editIdx === idx) return;
+      if (editingText?.editIdx === idx) {
+        // Still draw whiteout to hide original PDF text while editing
+        if (ann.whiteout) {
+          ctx.save();
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(ann.whiteout.x, ann.whiteout.y, ann.whiteout.w, ann.whiteout.h);
+          ctx.restore();
+        }
+        return;
+      }
       drawAnn(ann);
 
       // Selection outline
@@ -875,11 +939,13 @@ export default function PdfEditor({ onBack, tool }) {
       ctx.restore();
     }
 
-    // Text tool: hover highlight on PDF text regions
+    // Text tool: hover highlight on PDF text regions (highlight entire line when hovered)
     if (activeTool === 'text' && pdfTextItems.length > 0) {
       ctx.save();
+      const hovBaseline = hoveredTextItem?.baseline;
+      const hovTolerance = hoveredTextItem ? hoveredTextItem.fontSize * 0.3 : 0;
       for (const item of pdfTextItems) {
-        const isHovered = hoveredTextItem === item;
+        const isHovered = hoveredTextItem && Math.abs(item.baseline - hovBaseline) < hovTolerance;
         ctx.fillStyle = isHovered ? 'rgba(69, 123, 157, 0.12)' : 'rgba(69, 123, 157, 0.04)';
         ctx.fillRect(item.x - 1, item.y - item.height - 1, item.width + 2, item.height + 4);
         if (isHovered) {
@@ -947,12 +1013,15 @@ export default function PdfEditor({ onBack, tool }) {
       // First check if clicking on existing annotation text
       for (let i = pageAnns.length - 1; i >= 0; i--) {
         if (pageAnns[i].type === 'text' && hitTest(pageAnns[i], pos.x, pos.y)) {
+          const ann = pageAnns[i];
           setEditingText({
-            x: pageAnns[i].x, y: pageAnns[i].y,
-            value: pageAnns[i].text, editIdx: i,
-            matchedFontSize: pageAnns[i].fontSize,
-            matchedBold: pageAnns[i].fontWeight >= 700,
-            matchedItalic: pageAnns[i].fontStyle === 'italic',
+            x: ann.x, y: ann.y,
+            value: ann.text, originalValue: ann.text, editIdx: i,
+            matchedFontSize: ann.fontSize,
+            matchedBold: ann.fontWeight >= 700,
+            matchedItalic: ann.fontStyle === 'italic',
+            matchedColor: ann.color,
+            clickX: pos.x,
           });
           setSelectedIdx(null);
           setTimeout(() => textInputRef.current?.focus(), 30);
@@ -963,14 +1032,40 @@ export default function PdfEditor({ onBack, tool }) {
       // Check if clicking on PDF text -> edit with whiteout
       const hit = findTextItemAt(pos.x, pos.y);
       if (hit) {
+        // Sample text color from rendered canvas — try multiple points to find actual text pixels
+        let sampledColor = '#1a1a1a';
+        if (canvasRef.current) {
+          const ctx = canvasRef.current.getContext('2d');
+          const cy = Math.round(hit.y - hit.height * 0.35);
+          // Sample several x positions along the text to hit actual character pixels
+          const sampleXs = [0.1, 0.2, 0.3, 0.5, 0.7].map(f => Math.round(hit.x + hit.width * f));
+          let bestPixel = null, bestDarkness = 255 * 3;
+          for (const sx of sampleXs) {
+            const pixel = ctx.getImageData(sx, cy, 1, 1).data;
+            const brightness = pixel[0] + pixel[1] + pixel[2];
+            // Skip near-white pixels (background)
+            if (brightness > 700) continue;
+            if (brightness < bestDarkness) {
+              bestDarkness = brightness;
+              bestPixel = pixel;
+            }
+          }
+          if (bestPixel) {
+            sampledColor = `rgb(${bestPixel[0]}, ${bestPixel[1]}, ${bestPixel[2]})`;
+          }
+        }
         setTextSize(hit.fontSize);
+        setStrokeColor(sampledColor);
         setEditingText({
           x: hit.x, y: hit.baseline,
           value: hit.str,
+          originalValue: hit.str,
           matchedFontSize: hit.fontSize,
           matchedBold: hit.isBold,
           matchedItalic: hit.isItalic,
+          matchedColor: sampledColor,
           pdfTextItem: hit,
+          clickX: pos.x,
         });
         setSelectedIdx(null);
         setGuides({ h: [hit.baseline], v: [hit.x] });
@@ -1104,18 +1199,25 @@ export default function PdfEditor({ onBack, tool }) {
     setGuides({ h: [], v: [] });
 
     if (editingText.editIdx != null) {
+      // Re-editing existing annotation
       if (value.trim()) {
         updateAnn(editingText.editIdx, { text: value });
       } else {
         deleteAnn(editingText.editIdx);
       }
     } else if (value.trim()) {
+      // Skip if clicking PDF text and leaving it unchanged
+      if (editingText.pdfTextItem && value === editingText.originalValue) {
+        setEditingText(null);
+        return;
+      }
       const fs = editingText.matchedFontSize || textSize;
-      const fw = editingText.matchedBold ? 700 : 600;
+      const fw = editingText.matchedBold ? 700 : 400;
       const fst = editingText.matchedItalic ? 'italic' : 'normal';
+      const color = editingText.matchedColor || strokeColor;
       const annData = {
         type: 'text', x: editingText.x, y: editingText.y,
-        text: value, color: strokeColor, fontSize: fs,
+        text: value, color, fontSize: fs,
         fontWeight: fw, fontStyle: fst,
       };
       if (editingText.pdfTextItem) {
@@ -1143,6 +1245,7 @@ export default function PdfEditor({ onBack, tool }) {
           matchedFontSize: ann.fontSize,
           matchedBold: ann.fontWeight >= 700,
           matchedItalic: ann.fontStyle === 'italic',
+          clickX: pos.x,
         });
         setSelectedIdx(null);
         setActiveTool('text');
@@ -1553,9 +1656,56 @@ export default function PdfEditor({ onBack, tool }) {
                 onContextMenu={handleContextMenu} />
 
               {/* Inline text editor */}
-              {editingText && (
+              {editingText && (() => {
+                const isPdfText = !!editingText.pdfTextItem;
+                const fs = editingText.matchedFontSize || textSize;
+                const lineW = isPdfText ? editingText.pdfTextItem.width + 8 : undefined;
+                return (
                 <textarea
-                  ref={textInputRef}
+                  ref={el => {
+                    textInputRef.current = el;
+                    if (el && editingText?.clickX != null) {
+                      // Estimate cursor position from click X coordinate
+                      const text = editingText.value || '';
+                      if (text.length > 0) {
+                        const relX = editingText.clickX - editingText.x;
+                        const isBold = editingText.matchedBold;
+                        // Measure character widths using a temporary canvas
+                        const mc = document.createElement('canvas').getContext('2d');
+                        const wt = isBold ? 700 : 400;
+                        const st = editingText.matchedItalic ? 'italic ' : '';
+                        mc.font = `${st}${wt} ${fs}px "Space Grotesk", sans-serif`;
+                        let cursorIdx = text.length;
+                        for (let i = 0; i < text.length; i++) {
+                          const w = mc.measureText(text.substring(0, i + 1)).width;
+                          const prevW = i > 0 ? mc.measureText(text.substring(0, i)).width : 0;
+                          const charMid = prevW + (w - prevW) / 2;
+                          if (relX < charMid) {
+                            cursorIdx = i;
+                            break;
+                          }
+                        }
+                        const savedClickX = editingText.clickX;
+                        // Clear clickX so re-renders don't reset cursor
+                        editingText.clickX = null;
+                        // Use requestAnimationFrame to set cursor after React renders
+                        requestAnimationFrame(() => {
+                          if (el && el === textInputRef.current) {
+                            el.setSelectionRange(cursorIdx, cursorIdx);
+                            // For PDF text with nowrap, scroll textarea to show cursor
+                            if (isPdfText) {
+                              const cursorPixelX = mc.measureText(text.substring(0, cursorIdx)).width;
+                              const visibleW = el.clientWidth;
+                              // Center cursor in visible area
+                              el.scrollLeft = Math.max(0, cursorPixelX - visibleW / 2);
+                            }
+                          }
+                        });
+                      } else {
+                        editingText.clickX = null;
+                      }
+                    }
+                  }}
                   key={`te-${editingText.x}-${editingText.y}-${editingText.editIdx}`}
                   autoFocus
                   defaultValue={editingText.value || ''}
@@ -1564,33 +1714,47 @@ export default function PdfEditor({ onBack, tool }) {
                   style={{
                     position: 'absolute',
                     left: editingText.x,
-                    top: editingText.y - (editingText.matchedFontSize || textSize),
-                    fontSize: editingText.matchedFontSize || textSize,
+                    top: editingText.y - fs,
+                    fontSize: fs,
                     fontFamily: '"Space Grotesk", sans-serif',
-                    fontWeight: editingText.matchedBold ? 700 : 600,
+                    fontWeight: editingText.matchedBold ? 700 : 400,
                     fontStyle: editingText.matchedItalic ? 'italic' : 'normal',
-                    color: editingText.editIdx != null
-                      ? (pageAnns[editingText.editIdx]?.color || strokeColor)
-                      : strokeColor,
-                    background: editingText.pdfTextItem ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.06)',
+                    color: editingText.matchedColor
+                      || (editingText.editIdx != null ? pageAnns[editingText.editIdx]?.color : null)
+                      || strokeColor,
+                    background: isPdfText ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.06)',
                     border: 'none',
                     borderBottom: '2px solid var(--cat-edit)',
                     borderRadius: 0,
                     padding: '2px 3px',
                     outline: 'none',
-                    minWidth: 60,
+                    // PDF text: fixed line width, no wrap; New text: auto-grow
+                    width: isPdfText ? Math.min(lineW, pageSize.width - editingText.x - 4) : undefined,
+                    minWidth: isPdfText ? undefined : 60,
                     maxWidth: pageSize.width - editingText.x - 4,
-                    resize: 'none', overflow: 'hidden',
+                    resize: 'none',
+                    overflowX: isPdfText ? 'auto' : 'hidden',
+                    overflowY: 'hidden',
                     lineHeight: 1.25, zIndex: 100,
                     caretColor: 'var(--cat-edit)',
-                    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                    boxShadow: 'none', pointerEvents: 'auto',
+                    whiteSpace: isPdfText ? 'nowrap' : 'pre-wrap',
+                    wordBreak: isPdfText ? 'normal' : 'break-word',
+                    // PDF text: fixed single-line height
+                    height: isPdfText ? Math.round(fs * 1.25 + 8) : undefined,
+                    boxShadow: isPdfText
+                      ? '0 0 0 1px rgba(106,76,147,0.2), 0 2px 8px rgba(0,0,0,0.08)'
+                      : 'none',
+                    pointerEvents: 'auto',
                   }}
                   onInput={e => {
-                    e.target.style.height = 'auto';
-                    e.target.style.height = e.target.scrollHeight + 'px';
-                    e.target.style.width = 'auto';
-                    e.target.style.width = Math.max(60, Math.min(e.target.scrollWidth + 10, pageSize.width - editingText.x - 4)) + 'px';
+                    if (!isPdfText) {
+                      // New text: auto-grow height and width
+                      e.target.style.height = 'auto';
+                      e.target.style.height = e.target.scrollHeight + 'px';
+                      e.target.style.width = 'auto';
+                      e.target.style.width = Math.max(60, Math.min(e.target.scrollWidth + 10, pageSize.width - editingText.x - 4)) + 'px';
+                    }
+                    // PDF text: width stays fixed to original line width
                   }}
                   onKeyDown={e => {
                     e.stopPropagation();
@@ -1606,7 +1770,8 @@ export default function PdfEditor({ onBack, tool }) {
                   onPointerDown={e => e.stopPropagation()}
                   onClick={e => e.stopPropagation()}
                 />
-              )}
+                );
+              })()}
             </div>
           </div>
         </div>
