@@ -11,7 +11,9 @@
       "Bash(curl -s http://localhost:5173)",
       "mcp__plugin_chrome-devtools-mcp_chrome-devtools__navigate_page",
       "Read(//Volumes/ExtDisk/Santosh/Devtools/**)",
-      "Bash(ls /Volumes/ExtDisk/Santosh/pdf-toolkit/src/tools/*.jsx)"
+      "Bash(ls /Volumes/ExtDisk/Santosh/pdf-toolkit/src/tools/*.jsx)",
+      "Bash(npx vite:*)",
+      "Bash(bun run:*)"
     ],
     "additionalDirectories": [
       "/Volumes/ExtDisk/Downloads/pdf-toolkit-web-app/project"

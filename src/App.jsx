@@ -11,6 +11,7 @@ import PageNumbers from './tools/PageNumbers';
 import RotatePdf from './tools/RotatePdf';
 import CompressPdf from './tools/CompressPdf';
 import Watermark from './tools/Watermark';
+import PdfEditor from './tools/PdfEditor';
 
 const TOOLS = [
   { id: 'merge', title: 'Merge PDF', icon: '📑', cat: 'organize', desc: 'Combine several PDFs into one — drag to reorder.' },
@@ -23,6 +24,7 @@ const TOOLS = [
   { id: 'rotate', title: 'Rotate PDF', icon: '🔄', cat: 'edit', desc: 'Spin all or chosen pages the right way up.' },
   { id: 'compress', title: 'Compress PDF', icon: '🗜️', cat: 'optimize', desc: 'Re-encode images to shrink the file size.' },
   { id: 'watermark', title: 'Watermark', icon: '💧', cat: 'security', desc: 'Lay a text watermark over every page.' },
+  { id: 'editor', title: 'PDF Editor', icon: '✏️', cat: 'edit', desc: 'Draw, annotate & add text on any page.' },
 ];
 
 const CATEGORIES = ['all', 'organize', 'convert', 'edit', 'optimize', 'security'];
@@ -46,6 +48,7 @@ const TOOL_COMPONENTS = {
   rotate: RotatePdf,
   compress: CompressPdf,
   watermark: Watermark,
+  editor: PdfEditor,
 };
 
 function formatSize(bytes) {
@@ -117,18 +120,22 @@ function App() {
             </button>
           </div>
         </header>
-        <div className="main-content">
-          <div className="workspace">
-            <div className="ws-header">
-              <span className="ws-emoji">{tool.icon}</span>
-              <div className="ws-info">
-                <h2>{tool.title}</h2>
-                <p>{tool.desc}</p>
+        {openTool === 'editor' ? (
+          <ToolComponent onBack={() => setOpenTool(null)} tool={tool} />
+        ) : (
+          <div className="main-content">
+            <div className="workspace">
+              <div className="ws-header">
+                <span className="ws-emoji">{tool.icon}</span>
+                <div className="ws-info">
+                  <h2>{tool.title}</h2>
+                  <p>{tool.desc}</p>
+                </div>
               </div>
+              <ToolComponent onBack={() => setOpenTool(null)} />
             </div>
-            <ToolComponent />
           </div>
-        </div>
+        )}
         <footer className="footer">
           runs 100% in your browser · powered by pdf-lib · pdf.js · tesseract.js
         </footer>
