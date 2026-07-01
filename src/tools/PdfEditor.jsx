@@ -866,112 +866,115 @@ export default function PdfEditor({ onBack, tool }) {
         const vp = page.getViewport({ scale: renderScale });
         const tc = await page.getTextContent();
         if (cancelled) return;
-        // tc.styles maps fontName -> { fontFamily, ascent, descent, vertical }
         const styles = tc.styles || {};
-        const items = tc.items
-          .filter(it => it.str && it.str.trim())
-          .map(it => {
-            const tx = it.transform;
-            const fontSize = Math.round(Math.abs(tx[3]) * renderScale);
-            const x = tx[4] * renderScale;
-            const y = vp.height - tx[5] * renderScale;
-            const width = it.width * renderScale;
-            const height = it.height * renderScale;
-            const fn = it.fontName || '';
-            // Use PDF.js styles for actual font family when available
-            const styleInfo = styles[fn];
-            const actualFamily = styleInfo?.fontFamily || '';
-            const detFont = [
-              fn ? `"${fn}"` : null,
-              actualFamily ? `"${actualFamily}"` : null,
-              detectFontFamily(actualFamily || fn)
-            ].filter(Boolean).join(', ');
-            const detectedWeight = detectFontWeight(fn, actualFamily);
-            const isBoldFromName = /bold/i.test(fn) || /bold/i.test(actualFamily);
-            const isItalicFromName = /italic|oblique/i.test(fn) || /italic|oblique/i.test(actualFamily);
-            return {
-              str: it.str, x, y, width, height, fontSize,
-              fontName: fn,
-              actualFamily,
-              detectedFont: detFont,
-              isBold: isBoldFromName || detectedWeight >= 600,
-              isItalic: isItalicFromName,
-              fontWeight: detectedWeight,
-              baseline: y,
-            };
+
+        // First pass: convert raw items to scaled coordinates
+        const rawItems = tc.items.map(it => {
+          const tx = it.transform;
+          const fontSize = Math.round(Math.abs(tx[3]) * renderScale);
+          const x = tx[4] * renderScale;
+          const y = vp.height - tx[5] * renderScale;
+          const width = it.width * renderScale;
+          const height = it.height * renderScale;
+          const fn = it.fontName || '';
+          const styleInfo = styles[fn];
+          const actualFamily = styleInfo?.fontFamily || '';
+          const detFont = [
+            fn ? `"${fn}"` : null,
+            actualFamily ? `"${actualFamily}"` : null,
+            detectFontFamily(actualFamily || fn)
+          ].filter(Boolean).join(', ');
+          const detectedWeight = detectFontWeight(fn, actualFamily);
+          return {
+            str: it.str || '', x, y, width, height, fontSize,
+            fontName: fn, actualFamily, detectedFont: detFont,
+            isBold: /bold/i.test(fn) || /bold/i.test(actualFamily) || detectedWeight >= 600,
+            isItalic: /italic|oblique/i.test(fn) || /italic|oblique/i.test(actualFamily),
+            fontWeight: detectedWeight,
+            baseline: y,
+            hasEOL: it.hasEOL,
+          };
+        });
+
+        // Second pass: group into lines using y-proximity
+        // Items on same visual line have baselines within ~half font-size
+        const mergedLines = [];
+        const used = new Set();
+        for (let i = 0; i < rawItems.length; i++) {
+          if (used.has(i) || !rawItems[i].str.trim()) continue;
+          const ref = rawItems[i];
+          const tol = ref.fontSize * 0.5;
+          const lineGroup = [ref];
+          used.add(i);
+          // Gather forward items on same baseline
+          for (let j = i + 1; j < rawItems.length; j++) {
+            if (used.has(j)) continue;
+            const it = rawItems[j];
+            if (Math.abs(it.baseline - ref.baseline) < tol) {
+              if (it.str.trim()) lineGroup.push(it);
+              used.add(j);
+            } else if (it.baseline > ref.baseline + ref.fontSize) {
+              break; // past this line vertically
+            }
+          }
+          lineGroup.sort((a, b) => a.x - b.x);
+
+          // Build merged string with proper spacing
+          let mergedStr = '';
+          for (let k = 0; k < lineGroup.length; k++) {
+            if (k > 0) {
+              const prev = lineGroup[k - 1];
+              const gap = lineGroup[k].x - (prev.x + prev.width);
+              if (gap > 1) mergedStr += ' ';
+            }
+            mergedStr += lineGroup[k].str;
+          }
+          if (!mergedStr.trim()) continue;
+
+          const minX = Math.min(...lineGroup.map(it => it.x));
+          const maxRight = Math.max(...lineGroup.map(it => it.x + it.width));
+          const maxHeight = Math.max(...lineGroup.map(it => it.height));
+          mergedLines.push({
+            str: mergedStr,
+            x: minX, y: ref.y,
+            width: maxRight - minX,
+            height: maxHeight,
+            fontSize: ref.fontSize,
+            fontName: ref.fontName,
+            actualFamily: ref.actualFamily,
+            detectedFont: ref.detectedFont,
+            isBold: ref.isBold,
+            isItalic: ref.isItalic,
+            fontWeight: ref.fontWeight,
+            baseline: ref.baseline,
+            isLine: true,
           });
-        if (!cancelled) setPdfTextItems(items);
+        }
+
+        if (!cancelled) setPdfTextItems(mergedLines);
       } catch { if (!cancelled) setPdfTextItems([]); }
     })();
     return () => { cancelled = true; };
   }, [pdfDoc, currentPage, renderScale]);
 
-  /* Find PDF text item at click position — merges all chunks on the same line */
+  /* Find PDF text line at click position — items are pre-merged lines */
   const findTextItemAt = useCallback((px, py) => {
-    // First try exact hit on a chunk
-    let hitItem = null;
+    // Direct hit on line bounding box
     for (const item of pdfTextItems) {
       if (px >= item.x - 4 && px <= item.x + item.width + 4 &&
           py >= item.y - item.height - 4 && py <= item.y + 4) {
-        hitItem = item;
-        break;
+        return item;
       }
     }
-
-    // If no exact hit, find nearest chunk whose vertical range contains click y
-    if (!hitItem) {
-      let bestDist = Infinity;
-      for (const item of pdfTextItems) {
-        const yTop = item.y - item.height - 4;
-        const yBot = item.y + 4;
-        if (py >= yTop && py <= yBot) {
-          const cx = item.x + item.width / 2;
-          const dist = Math.abs(px - cx);
-          if (dist < bestDist && dist < item.width * 3) {
-            bestDist = dist;
-            hitItem = item;
-          }
-        }
+    // Fallback: find nearest line whose vertical range contains click y
+    let bestDist = Infinity, bestItem = null;
+    for (const item of pdfTextItems) {
+      if (py >= item.y - item.height - 6 && py <= item.y + 6) {
+        const dist = Math.abs(px - (item.x + item.width / 2));
+        if (dist < bestDist) { bestDist = dist; bestItem = item; }
       }
     }
-    if (!hitItem) return null;
-
-    // Gather all chunks on same baseline (within tolerance)
-    const tolerance = hitItem.fontSize * 0.5;
-    const lineItems = pdfTextItems.filter(it =>
-      Math.abs(it.baseline - hitItem.baseline) < tolerance
-    );
-    lineItems.sort((a, b) => a.x - b.x);
-
-    // Merge with proper spacing — add space between chunks that have gaps
-    let mergedStr = '';
-    for (let i = 0; i < lineItems.length; i++) {
-      if (i > 0) {
-        const prev = lineItems[i - 1];
-        const gap = lineItems[i].x - (prev.x + prev.width);
-        // Add space if there's a gap between chunks (> 1px)
-        if (gap > 1) mergedStr += ' ';
-      }
-      mergedStr += lineItems[i].str;
-    }
-
-    const minX = Math.min(...lineItems.map(it => it.x));
-    const maxRight = Math.max(...lineItems.map(it => it.x + it.width));
-    const maxHeight = Math.max(...lineItems.map(it => it.height));
-    return {
-      str: mergedStr,
-      x: minX,
-      y: hitItem.y,
-      width: maxRight - minX,
-      height: maxHeight,
-      fontSize: hitItem.fontSize,
-      fontName: hitItem.fontName,
-      detectedFont: hitItem.detectedFont,
-      isBold: hitItem.isBold,
-      isItalic: hitItem.isItalic,
-      fontWeight: hitItem.fontWeight,
-      baseline: hitItem.baseline,
-    };
+    return bestItem;
   }, [pdfTextItems]);
 
   /* Find nearest text item for font matching */
