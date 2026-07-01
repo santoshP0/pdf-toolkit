@@ -602,6 +602,9 @@ export default function PdfEditor({ onBack, tool }) {
 
   /* Context menu */
   const [contextMenu, setContextMenu] = useState(null);
+
+  /* Custom confirm modal — { title, message, confirmLabel, onConfirm, danger } */
+  const [confirmModal, setConfirmModal] = useState(null);
   const [clipboard, setClipboard] = useState(null);
 
   /* PDF text extraction for editing + alignment */
@@ -1886,24 +1889,31 @@ export default function PdfEditor({ onBack, tool }) {
     setEditingText(null);
   }, [editingText, updateAnn, deleteAnn, addAnn, strokeColor, textSize, selectedFont]);
 
-  const handleClearWorkspace = async () => {
-    const confirm = window.confirm("Are you sure you want to clear all annotations, remove this PDF, and start fresh with a new one?");
-    if (confirm) {
-      await clearPDFFromDB();
-      localStorage.removeItem('pdf_editor_annotations');
-      localStorage.removeItem('pdf_editor_current_page');
-      localStorage.removeItem('pdf_editor_zoom');
-      
-      setFile(null);
-      setPdfDoc(null);
-      setAnnotations({});
-      setHistory([{}]);
-      setHistoryIdx(0);
-      setPdfBytes(null);
-      setThumbnails({});
-      setSelectedIdx(null);
-      setEditingText(null);
-    }
+  const doClearWorkspace = async () => {
+    await clearPDFFromDB();
+    localStorage.removeItem('pdf_editor_annotations');
+    localStorage.removeItem('pdf_editor_current_page');
+    localStorage.removeItem('pdf_editor_zoom');
+
+    setFile(null);
+    setPdfDoc(null);
+    setAnnotations({});
+    setHistory([{}]);
+    setHistoryIdx(0);
+    setPdfBytes(null);
+    setThumbnails({});
+    setSelectedIdx(null);
+    setEditingText(null);
+  };
+
+  const handleClearWorkspace = () => {
+    setConfirmModal({
+      title: 'Open New File',
+      message: 'This will remove the current PDF and all annotations. Your changes won\'t be saved unless you export first.',
+      confirmLabel: 'Continue',
+      danger: true,
+      onConfirm: doClearWorkspace,
+    });
   };
 
   /* Double click to re-edit text */
@@ -2813,9 +2823,38 @@ export default function PdfEditor({ onBack, tool }) {
               {/* Layers list */}
               <div style={{ ...S.panelSection, flex: 1, overflowY: 'auto' }}>
                 <div style={{ ...S.panelTitle, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>Layers</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>Layers</span>
+                    {pageAnns.length > 0 && (
+                      <span style={S.badge}>{pageAnns.length}</span>
+                    )}
+                  </div>
                   {pageAnns.length > 0 && (
-                    <span style={S.badge}>{pageAnns.length}</span>
+                    <button
+                      onClick={() => {
+                        setConfirmModal({
+                          title: 'Clear All Layers',
+                          message: `Remove all ${pageAnns.length} annotation${pageAnns.length > 1 ? 's' : ''} from this page?`,
+                          confirmLabel: 'Clear',
+                          danger: true,
+                          onConfirm: () => {
+                            setAnnsH(prev => ({ ...prev, [currentPage]: [] }));
+                            setSelectedIdx(null);
+                          },
+                        });
+                      }}
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        fontSize: 9, fontFamily: 'var(--font-sans)', fontWeight: 600,
+                        color: 'var(--text-muted)', padding: '2px 4px', borderRadius: 3,
+                        transition: 'all 0.1s',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'none'; }}
+                      title="Clear all layers on this page"
+                    >
+                      Clear All
+                    </button>
                   )}
                 </div>
                 {pageAnns.length === 0 ? (
@@ -3234,33 +3273,47 @@ export default function PdfEditor({ onBack, tool }) {
 
           <span style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 3px' }} />
 
-          <button style={{ ...S.navBtn(false), width: 'auto', padding: '0 5px', fontSize: 9, fontFamily: 'var(--font-sans)' }}
-            onClick={() => {
-              if (window.confirm("Are you sure you want to clear all annotations from the current page?")) {
-                setAnnsH(prev => ({ ...prev, [currentPage]: [] }));
-                setSelectedIdx(null);
-              }
-            }}>clear page</button>
-          <button style={{
-            ...S.navBtn(false), width: 'auto', padding: '0 8px', fontSize: 9,
-            fontFamily: 'var(--font-sans)', fontWeight: 600, color: 'var(--text-danger)',
-            border: '1px dashed var(--text-danger)', borderRadius: 4, marginLeft: 4,
-            background: 'rgba(239, 68, 68, 0.05)'
-          }}
-            onClick={handleClearWorkspace}>Clear & Start New</button>
+          <button
+            onClick={handleClearWorkspace}
+            title="Close current file and open a new one"
+            style={{
+              padding: '5px 14px', borderRadius: 8,
+              border: '1.5px solid #3b82f6',
+              background: 'rgba(59,130,246,0.08)', color: '#3b82f6',
+              fontSize: 10, fontWeight: 700, cursor: 'pointer',
+              fontFamily: 'var(--font-hand)',
+              letterSpacing: '0.01em',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = '#3b82f6'; e.currentTarget.style.color = '#fff'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.08)'; e.currentTarget.style.color = '#3b82f6'; }}
+          >open new file</button>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 8, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
             {totalAnns > 0 ? `${totalAnns} annotation${totalAnns > 1 ? 's' : ''}` : ''}
           </span>
           <button
-            className="btn btn-primary"
             disabled={processing || totalAnns === 0}
             onClick={exportPdf}
-            style={{ fontSize: 10, padding: '3px 12px', fontFamily: 'var(--font-sans)', fontWeight: 700 }}
+            title="Export annotated PDF"
+            style={{
+              padding: '5px 16px', borderRadius: 8,
+              border: '1.5px solid #ef4444',
+              background: (processing || totalAnns === 0) ? 'rgba(239,68,68,0.04)' : '#ef4444',
+              color: (processing || totalAnns === 0) ? '#ef4444' : '#fff',
+              fontSize: 10, fontWeight: 700, cursor: (processing || totalAnns === 0) ? 'default' : 'pointer',
+              fontFamily: 'var(--font-hand)',
+              letterSpacing: '0.01em',
+              transition: 'all 0.15s',
+              opacity: (processing || totalAnns === 0) ? 0.4 : 1,
+              boxShadow: (processing || totalAnns === 0) ? 'none' : '0 2px 8px rgba(239,68,68,0.25)',
+            }}
+            onMouseEnter={e => { if (!e.currentTarget.disabled) { e.currentTarget.style.background = '#dc2626'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(239,68,68,0.35)'; }}}
+            onMouseLeave={e => { if (!e.currentTarget.disabled) { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(239,68,68,0.25)'; }}}
           >
-            {processing ? 'Exporting...' : 'Export PDF'}
+            {processing ? 'exporting...' : 'export pdf'}
           </button>
         </div>
       </div>
@@ -3325,6 +3378,77 @@ export default function PdfEditor({ onBack, tool }) {
                 }}>Clear page</button>
             </>
           )}
+        </div>
+      )}
+
+      {/* Custom confirm modal */}
+      {confirmModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(4px)',
+        }} onClick={() => setConfirmModal(null)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: 'var(--surface)',
+            border: '2px solid var(--border)',
+            borderRadius: 16,
+            padding: '28px 32px 24px',
+            minWidth: 320, maxWidth: 400,
+            boxShadow: '0 20px 60px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.05)',
+            fontFamily: 'var(--font-sans)',
+            position: 'relative',
+            animation: 'fadeUp 0.2s ease both',
+          }}>
+            <div style={{
+              fontSize: 17, fontWeight: 700,
+              color: 'var(--sketch-text)',
+              fontFamily: 'var(--font-hand)',
+              marginBottom: 8,
+            }}>
+              {confirmModal.title}
+            </div>
+            <div style={{
+              fontSize: 13, lineHeight: 1.6,
+              color: 'var(--text-muted)',
+              marginBottom: 24,
+            }}>
+              {confirmModal.message}
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setConfirmModal(null)}
+                style={{
+                  padding: '8px 20px', borderRadius: 8,
+                  border: '1.5px solid var(--border)',
+                  background: 'var(--surface)', color: 'var(--sketch-text)',
+                  fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                  fontFamily: 'var(--font-sans)',
+                  transition: 'all 0.1s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-hover)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'var(--surface)'}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { confirmModal.onConfirm(); setConfirmModal(null); }}
+                style={{
+                  padding: '8px 20px', borderRadius: 8,
+                  border: '1.5px solid transparent',
+                  background: confirmModal.danger ? '#ef4444' : 'var(--cat-edit)',
+                  color: '#fff',
+                  fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                  fontFamily: 'var(--font-sans)',
+                  transition: 'all 0.1s',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                }}
+                onMouseEnter={e => e.currentTarget.style.opacity = '0.9'}
+                onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+              >
+                {confirmModal.confirmLabel || 'Confirm'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
