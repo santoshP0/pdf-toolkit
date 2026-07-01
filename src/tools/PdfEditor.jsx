@@ -1505,7 +1505,7 @@ export default function PdfEditor({ onBack, tool }) {
             }
           }
           if (bestPixel) {
-            sampledColor = `rgb(${bestPixel[0]}, ${bestPixel[1]}, ${bestPixel[2]})`;
+            sampledColor = '#' + [bestPixel[0], bestPixel[1], bestPixel[2]].map(c => c.toString(16).padStart(2, '0')).join('');
           }
         }
         setTextSize(hit.fontSize);
@@ -1805,7 +1805,7 @@ export default function PdfEditor({ onBack, tool }) {
           if (avgR > 238 && avgG > 238 && avgB > 238) {
             bgColor = '#ffffff';
           } else {
-            bgColor = `rgb(${Math.round(avgR)}, ${Math.round(avgG)}, ${Math.round(avgB)})`;
+            bgColor = '#' + [Math.round(avgR), Math.round(avgG), Math.round(avgB)].map(c => c.toString(16).padStart(2, '0')).join('');
           }
         }
       }
