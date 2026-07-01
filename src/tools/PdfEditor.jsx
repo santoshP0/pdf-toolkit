@@ -25,16 +25,32 @@ function getPdfjsLib() {
 /* ================================================================
    Constants
    ================================================================ */
+const ToolIcon = ({ id, size = 14, stroke = 'currentColor', sw = 1.8 }) => {
+  const p = { xmlns: 'http://www.w3.org/2000/svg', width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke, strokeWidth: sw, strokeLinecap: 'round', strokeLinejoin: 'round' };
+  switch (id) {
+    case 'select': return <svg {...p}><path d="M5 3l14 9-7 2-4 7z"/><path d="M12 14l5 5"/></svg>;
+    case 'text': return <svg {...p}><path d="M6 4h12"/><path d="M12 4v16"/><path d="M8 20h8"/></svg>;
+    case 'draw': return <svg {...p}><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>;
+    case 'highlight': return <svg {...p} fill={stroke} fillOpacity={0.25}><rect x="3" y="10" width="18" height="6" rx="1"/><path d="M9 10V6h6v4"/></svg>;
+    case 'rect': return <svg {...p}><rect x="3" y="3" width="18" height="18" rx="2"/></svg>;
+    case 'circle': return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
+    case 'line': return <svg {...p}><line x1="5" y1="19" x2="19" y2="5"/></svg>;
+    case 'arrow': return <svg {...p}><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg>;
+    case 'eraser': return <svg {...p}><path d="M20 20H7L3 16a1 1 0 010-1.4l9.6-9.6a2 2 0 012.8 0l5.2 5.2a2 2 0 010 2.8L15 18.6"/></svg>;
+    default: return null;
+  }
+};
+
 const TOOL_DEFS = [
-  { id: 'select',    icon: '\u2B9C', label: 'Move',      shortcut: 'V', group: 0 },
-  { id: 'text',      icon: 'T',      label: 'Text',      shortcut: 'T', group: 0 },
-  { id: 'draw',      icon: '\u270E', label: 'Pen',       shortcut: 'P', group: 1 },
-  { id: 'highlight', icon: '\u2588', label: 'Highlight',  shortcut: 'H', group: 1 },
-  { id: 'rect',      icon: '\u25A1', label: 'Rectangle', shortcut: 'R', group: 2 },
-  { id: 'circle',    icon: '\u25CB', label: 'Ellipse',   shortcut: 'E', group: 2 },
-  { id: 'line',      icon: '\u2571', label: 'Line',      shortcut: 'L', group: 2 },
-  { id: 'arrow',     icon: '\u2192', label: 'Arrow',     shortcut: 'A', group: 2 },
-  { id: 'eraser',    icon: '\u2715', label: 'Eraser',    shortcut: 'X', group: 3 },
+  { id: 'select',    label: 'Move',      shortcut: 'V', group: 0 },
+  { id: 'text',      label: 'Text',      shortcut: 'T', group: 0 },
+  { id: 'draw',      label: 'Pen',       shortcut: 'P', group: 1 },
+  { id: 'highlight', label: 'Highlight',  shortcut: 'H', group: 1 },
+  { id: 'rect',      label: 'Rectangle', shortcut: 'R', group: 2 },
+  { id: 'circle',    label: 'Ellipse',   shortcut: 'E', group: 2 },
+  { id: 'line',      label: 'Line',      shortcut: 'L', group: 2 },
+  { id: 'arrow',     label: 'Arrow',     shortcut: 'A', group: 2 },
+  { id: 'eraser',    label: 'Eraser',    shortcut: 'X', group: 3 },
 ];
 
 const COLORS = [
@@ -121,8 +137,8 @@ const S = {
 
   /* Slim left toolbar */
   toolStrip: (w) => ({
-    width: w || 44, flexShrink: 0,
-    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    width: w || 140, flexShrink: 0,
+    display: 'flex', flexDirection: 'column', alignItems: w > 85 ? 'stretch' : 'center',
     padding: '6px 0', gap: 1,
     background: 'var(--surface)',
     borderRight: '1px solid var(--border)',
@@ -581,7 +597,7 @@ export default function PdfEditor({ onBack, tool }) {
   const [showLayers, setShowLayers] = useState(true);
   const [thumbnails, setThumbnails] = useState({});
   const [hoveredTool, setHoveredTool] = useState(null);
-  const [toolStripWidth, setToolStripWidth] = useState(44);
+  const [toolStripWidth, setToolStripWidth] = useState(140);
   const toolStripResizing = useRef(false);
 
   /* Context menu */
@@ -2379,7 +2395,7 @@ export default function PdfEditor({ onBack, tool }) {
                   onMouseLeave={() => setHoveredTool(null)}
                   title={`${t.label} (${t.shortcut})`}
                 >
-                  <span style={{ fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{t.icon}</span>
+                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16 }}><ToolIcon id={t.id} size={16} stroke={activeTool === t.id ? 'var(--cat-edit)' : 'var(--sketch-text)'} /></span>
                   {isWide && (
                     <span style={{ fontSize: 11, fontWeight: 500, color: activeTool === t.id ? 'var(--cat-edit)' : 'var(--sketch-text)' }}>
                       {t.label}
@@ -2395,6 +2411,8 @@ export default function PdfEditor({ onBack, tool }) {
             );
           })}
 
+          {/* Color/stroke controls — only for drawing tools */}
+          {!['select', 'eraser'].includes(activeTool) && <>
           <div style={{ ...S.toolDivider, width: toolStripWidth > 85 ? '85%' : 22 }} />
 
           {/* Figma-style Border (Stroke) Color picker */}
@@ -2402,12 +2420,13 @@ export default function PdfEditor({ onBack, tool }) {
             display: 'flex',
             flexDirection: toolStripWidth > 85 ? 'row' : 'column',
             alignItems: 'center',
-            justifyContent: 'center',
+            justifyContent: toolStripWidth > 85 ? 'flex-start' : 'center',
             gap: 6,
-            padding: '0 4px',
+            padding: '4px 8px',
             width: '100%',
+            boxSizing: 'border-box',
           }}>
-            {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>BORDER</span>}
+            {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', width: 42, flexShrink: 0 }}>BORDER</span>}
             <div style={{
               display: 'flex',
               alignItems: 'center',
@@ -2469,13 +2488,14 @@ export default function PdfEditor({ onBack, tool }) {
               display: 'flex',
               flexDirection: toolStripWidth > 85 ? 'row' : 'column',
               alignItems: 'center',
-              justifyContent: 'center',
+              justifyContent: toolStripWidth > 85 ? 'flex-start' : 'center',
               gap: 6,
-              padding: '0 4px',
+              padding: '4px 8px',
               width: '100%',
+              boxSizing: 'border-box',
               marginTop: 4,
             }}>
-              {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>FILL</span>}
+              {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', width: 42, flexShrink: 0 }}>FILL</span>}
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -2545,6 +2565,8 @@ export default function PdfEditor({ onBack, tool }) {
             </div>
           )}
 
+          </>}
+
           {['draw', 'highlight', 'rect', 'circle', 'line', 'arrow'].includes(activeTool) && (
             <>
               <div style={{ ...S.toolDivider, width: toolStripWidth > 85 ? '85%' : 22 }} />
@@ -2553,18 +2575,20 @@ export default function PdfEditor({ onBack, tool }) {
                 display: 'flex',
                 flexDirection: toolStripWidth > 85 ? 'row' : 'column',
                 alignItems: 'center',
-                justifyContent: 'center',
+                justifyContent: toolStripWidth > 85 ? 'flex-start' : 'center',
                 gap: 4,
                 width: '100%',
+                padding: '4px 8px',
+                boxSizing: 'border-box',
               }}>
                 <ScrubbySlider
-                  label={toolStripWidth > 85 ? "Pen:" : "P:"}
+                  label={toolStripWidth > 85 ? "PEN:" : "P:"}
                   value={strokeWidth}
                   min={1}
                   max={16}
                   onChange={(val) => setStrokeWidthSync(val)}
-                  labelStyle={{ fontSize: 9 }}
-                  style={{ display: 'inline-flex', padding: '2px 4px' }}
+                  labelStyle={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', width: toolStripWidth > 85 ? 42 : 'auto', flexShrink: 0 }}
+                  style={{ display: 'inline-flex', padding: '2px 0' }}
                 />
                 {toolStripWidth > 85 && (
                   <input type="range" min={1} max={16} value={strokeWidth}
@@ -2590,12 +2614,14 @@ export default function PdfEditor({ onBack, tool }) {
                 display: 'flex',
                 flexDirection: toolStripWidth > 85 ? 'row' : 'column',
                 alignItems: 'center',
-                justifyContent: 'center',
+                justifyContent: toolStripWidth > 85 ? 'flex-start' : 'center',
                 gap: 4,
                 width: '100%',
+                padding: '4px 8px',
+                boxSizing: 'border-box',
               }}>
                 <ScrubbySlider
-                  label={toolStripWidth > 85 ? "Size:" : "S:"}
+                  label={toolStripWidth > 85 ? "SIZE:" : "S:"}
                   value={textSize}
                   min={8}
                   max={72}
@@ -2605,8 +2631,8 @@ export default function PdfEditor({ onBack, tool }) {
                     }
                     setTextSizeSync(val);
                   }}
-                  labelStyle={{ fontSize: 9 }}
-                  style={{ display: 'inline-flex', padding: '2px 4px' }}
+                  labelStyle={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', width: toolStripWidth > 85 ? 42 : 'auto', flexShrink: 0 }}
+                  style={{ display: 'inline-flex', padding: '2px 0' }}
                 />
                 {toolStripWidth > 85 && (
                   <input type="range" min={8} max={72} value={textSize}
@@ -2633,20 +2659,22 @@ export default function PdfEditor({ onBack, tool }) {
                 display: 'flex',
                 flexDirection: toolStripWidth > 85 ? 'row' : 'column',
                 alignItems: 'center',
-                justifyContent: 'center',
+                justifyContent: toolStripWidth > 85 ? 'flex-start' : 'center',
                 gap: 4,
-                padding: '0 4px',
+                padding: '4px 8px',
                 width: '100%',
+                boxSizing: 'border-box',
                 marginTop: 2,
               }}>
-                {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>FONT</span>}
+                {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', width: 42, flexShrink: 0 }}>FONT</span>}
                 <select value={selectedFont}
                   onChange={e => {
                     const val = e.target.value;
                     setSelectedFontSync(val);
                   }}
                   style={{
-                    width: toolStripWidth > 85 ? '65%' : 38,
+                    flex: toolStripWidth > 85 ? 1 : undefined,
+                    width: toolStripWidth > 85 ? 'auto' : 38,
                     fontSize: 8, padding: '2px 1px',
                     border: '1px solid var(--border)', borderRadius: 3,
                     background: 'var(--surface)', color: 'var(--sketch-text)',
@@ -2676,12 +2704,14 @@ export default function PdfEditor({ onBack, tool }) {
                 display: 'flex',
                 flexDirection: toolStripWidth > 85 ? 'row' : 'column',
                 gap: 4,
-                justifyContent: 'center',
+                justifyContent: toolStripWidth > 85 ? 'flex-start' : 'center',
                 alignItems: 'center',
                 width: '100%',
-                marginTop: 6,
+                padding: '4px 8px',
+                boxSizing: 'border-box',
+                marginTop: 2,
               }}>
-                {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', marginRight: 2 }}>STYLE</span>}
+                {toolStripWidth > 85 && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', width: 42, flexShrink: 0 }}>STYLE</span>}
                 <div style={{ display: 'flex', gap: 4 }}>
                   <button
                     onClick={() => {
