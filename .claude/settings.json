@@ -13,7 +13,11 @@
       "Read(//Volumes/ExtDisk/Santosh/Devtools/**)",
       "Bash(ls /Volumes/ExtDisk/Santosh/pdf-toolkit/src/tools/*.jsx)",
       "Bash(npx vite:*)",
-      "Bash(bun run:*)"
+      "Bash(bun run:*)",
+      "Read(//Volumes/ExtDisk/Santosh/pdf-toolkit/NR==1{s=NR} /^  \\\\/\\\\* ==|^  \\\\/\\\\/ /**)",
+      "Read(//^  \\\\/\\\\* ===.*$/{getline; if\\(/^ +[A-Z]/**)",
+      "Bash(wc -l /Volumes/ExtDisk/Santosh/pdf-toolkit/src/tools/pdf-editor/*.js /Volumes/ExtDisk/Santosh/pdf-toolkit/src/tools/pdf-editor/*.jsx)",
+      "Bash(npm run:*)"
     ],
     "additionalDirectories": [
       "/Volumes/ExtDisk/Downloads/pdf-toolkit-web-app/project"
