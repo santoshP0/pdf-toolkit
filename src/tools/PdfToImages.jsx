@@ -1,6 +1,6 @@
-import { useState, useRef } from 'react';
-import { saveAs } from 'file-saver';
-import { formatSize } from '../App';
+import { useState } from 'react';
+import usePdfTool from './shared/usePdfTool';
+import { Dropzone, FileInfo, ProgressBar, ActionRow } from './shared/PdfToolUI';
 
 function getPdfjsLib() {
   return import('pdfjs-dist').then(mod => {
@@ -13,15 +13,19 @@ function getPdfjsLib() {
 }
 
 export default function PdfToImages() {
-  const [file, setFile] = useState(null);
-  const [pageCount, setPageCount] = useState(0);
+  const {
+    file, setFile,
+    pageCount, setPageCount,
+    processing, setProcessing,
+    progress, setProgress,
+    dragOver, inputRef,
+    dropzoneProps, onInputChange,
+    reset, hasFile,
+  } = usePdfTool();
+
   const [format, setFormat] = useState('png');
   const [scale, setScale] = useState(2);
-  const [processing, setProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [images, setImages] = useState([]);
-  const [dragOver, setDragOver] = useState(false);
-  const inputRef = useRef();
 
   const loadFile = async (f) => {
     if (!f || f.type !== 'application/pdf') return;
@@ -39,8 +43,13 @@ export default function PdfToImages() {
 
   const handleDrop = (e) => {
     e.preventDefault();
-    setDragOver(false);
+    dropzoneProps.onDragLeave();
     loadFile(e.dataTransfer.files[0]);
+  };
+
+  const handleInputChange = (e) => {
+    loadFile(e.target.files[0]);
+    e.target.value = '';
   };
 
   const convert = async () => {
@@ -88,37 +97,35 @@ export default function PdfToImages() {
     });
   };
 
+  const handleReset = () => {
+    reset();
+    setImages([]);
+    setFormat('png');
+    setScale(2);
+  };
+
+  const customDropzoneProps = {
+    ...dropzoneProps,
+    onDrop: handleDrop,
+  };
+
   return (
     <div>
-      {!file ? (
-        <div
-          className={`dropzone${dragOver ? ' dragover' : ''}`}
-          onClick={() => inputRef.current?.click()}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-        >
-          <div className="dropzone-icon">{'🏞️'}</div>
-          <div className="dropzone-text">
-            <strong>Drop a PDF file here</strong> or click to browse
-          </div>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".pdf"
-            hidden
-            onChange={e => { loadFile(e.target.files[0]); e.target.value = ''; }}
-          />
-        </div>
+      {!hasFile ? (
+        <Dropzone
+          dragOver={dragOver}
+          dropzoneProps={customDropzoneProps}
+          inputRef={inputRef}
+          onInputChange={handleInputChange}
+          icon={'\uD83C\uDFDE\uFE0F'}
+        />
       ) : (
         <>
-          <div className="file-list">
-            <div className="file-item">
-              <span className="file-name">{file.name}</span>
-              <span className="file-size">{formatSize(file.size)} &middot; {pageCount} pages</span>
-              <button className="file-remove" onClick={() => { setFile(null); setPageCount(0); setImages([]); }}>{'\u00D7'}</button>
-            </div>
-          </div>
+          <FileInfo
+            file={file}
+            pageCount={pageCount}
+            onRemove={handleReset}
+          />
 
           <div className="controls">
             <h3>Export settings</h3>
@@ -140,15 +147,10 @@ export default function PdfToImages() {
           </div>
 
           {processing && (
-            <>
-              <div className="progress-text">Rendering... {progress}%</div>
-              <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${progress}%` }} />
-              </div>
-            </>
+            <ProgressBar progress={progress} label="Rendering..." />
           )}
 
-          <div className="action-row">
+          <ActionRow>
             <button className="btn btn-primary" disabled={processing} onClick={convert}>
               {processing ? 'Rendering...' : 'Convert to Images'}
             </button>
@@ -157,10 +159,10 @@ export default function PdfToImages() {
                 Download all ({images.length})
               </button>
             )}
-            <button className="btn btn-secondary" onClick={() => { setFile(null); setPageCount(0); setImages([]); }}>
+            <button className="btn btn-secondary" onClick={handleReset}>
               Choose another file
             </button>
-          </div>
+          </ActionRow>
 
           {images.length > 0 && (
             <div className="thumb-grid" style={{ marginTop: '1.5rem' }}>

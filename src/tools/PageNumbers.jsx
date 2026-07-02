@@ -1,36 +1,18 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
-import { saveAs } from 'file-saver';
-import { formatSize } from '../App';
+import usePdfTool from './shared/usePdfTool';
+import { Dropzone, FileInfo, ActionRow } from './shared/PdfToolUI';
 
 export default function PageNumbers() {
-  const [file, setFile] = useState(null);
-  const [pageCount, setPageCount] = useState(0);
+  const {
+    file, pageCount, processing, setProcessing,
+    dragOver, inputRef, dropzoneProps, onInputChange, reset, exportPdfBytes, hasFile,
+  } = usePdfTool();
+
   const [position, setPosition] = useState('bottom-center');
   const [fontSize, setFontSize] = useState(12);
   const [startNum, setStartNum] = useState(1);
   const [format, setFormat] = useState('plain');
-  const [processing, setProcessing] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const inputRef = useRef();
-
-  const loadFile = async (f) => {
-    if (!f || f.type !== 'application/pdf') return;
-    setFile(f);
-    try {
-      const bytes = await f.arrayBuffer();
-      const doc = await PDFDocument.load(bytes);
-      setPageCount(doc.getPageCount());
-    } catch (err) {
-      alert('Error loading: ' + err.message);
-    }
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragOver(false);
-    loadFile(e.dataTransfer.files[0]);
-  };
 
   const stamp = async () => {
     if (!file) return;
@@ -64,46 +46,30 @@ export default function PageNumbers() {
       });
 
       const pdfBytes = await doc.save();
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-      saveAs(blob, 'numbered.pdf');
+      exportPdfBytes(pdfBytes, 'numbered.pdf');
+      setPosition('bottom-center');
+      setFontSize(12);
+      setStartNum(1);
+      setFormat('plain');
     } catch (err) {
       alert('Error: ' + err.message);
-    } finally {
       setProcessing(false);
     }
   };
 
   return (
     <div>
-      {!file ? (
-        <div
-          className={`dropzone${dragOver ? ' dragover' : ''}`}
-          onClick={() => inputRef.current?.click()}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-        >
-          <div className="dropzone-icon">{'#\uFE0F\u20E3'}</div>
-          <div className="dropzone-text">
-            <strong>Drop a PDF file here</strong> or click to browse
-          </div>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".pdf"
-            hidden
-            onChange={e => { loadFile(e.target.files[0]); e.target.value = ''; }}
-          />
-        </div>
+      {!hasFile ? (
+        <Dropzone
+          dragOver={dragOver}
+          dropzoneProps={dropzoneProps}
+          inputRef={inputRef}
+          onInputChange={onInputChange}
+          icon={'#\uFE0F\u20E3'}
+        />
       ) : (
         <>
-          <div className="file-list">
-            <div className="file-item">
-              <span className="file-name">{file.name}</span>
-              <span className="file-size">{formatSize(file.size)} &middot; {pageCount} pages</span>
-              <button className="file-remove" onClick={() => { setFile(null); setPageCount(0); }}>{'\u00D7'}</button>
-            </div>
-          </div>
+          <FileInfo file={file} pageCount={pageCount} onRemove={reset} />
 
           <div className="controls">
             <h3>Number settings</h3>
@@ -152,14 +118,14 @@ export default function PageNumbers() {
             </div>
           </div>
 
-          <div className="action-row">
+          <ActionRow>
             <button className="btn btn-primary" disabled={processing} onClick={stamp}>
               {processing ? 'Processing...' : 'Add Page Numbers'}
             </button>
-            <button className="btn btn-secondary" onClick={() => { setFile(null); setPageCount(0); }}>
+            <button className="btn btn-secondary" onClick={reset}>
               Choose another file
             </button>
-          </div>
+          </ActionRow>
         </>
       )}
     </div>

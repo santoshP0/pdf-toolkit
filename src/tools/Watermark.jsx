@@ -1,8 +1,17 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { PDFDocument, rgb, StandardFonts, degrees } from 'pdf-lib';
-import { saveAs } from 'file-saver';
-import { formatSize } from '../App';
-import * as pdfjsLib from 'pdfjs-dist';
+import usePdfTool from './shared/usePdfTool';
+
+function getPdfjsLib() {
+  return import('pdfjs-dist').then(mod => {
+    if (!mod.GlobalWorkerOptions.workerSrc) {
+      mod.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${mod.version}/build/pdf.worker.min.mjs`;
+    }
+    return mod;
+  });
+}
+import { Dropzone, FileInfo, ActionRow } from './shared/PdfToolUI';
+// saveAs handled by usePdfTool.exportBlob
 
 /* ── Default layer factories ── */
 let _layerId = 0;
@@ -23,9 +32,10 @@ const makeImageLayer = (dataUrl, name, w, h) => ({
 });
 
 export default function Watermark() {
-  const [file, setFile] = useState(null);
+  const tool = usePdfTool({ outputName: 'watermarked.pdf' });
+  const { file, setFile, pageCount, setPageCount, processing, setProcessing, dragOver, inputRef, dropzoneProps, onInputChange, reset } = tool;
+
   const [pdfBytes, setPdfBytes] = useState(null);
-  const [pageCount, setPageCount] = useState(0);
 
   /* Layers */
   const [layers, setLayers] = useState([makeTextLayer()]);
@@ -40,9 +50,6 @@ export default function Watermark() {
   const [draggingId, setDraggingId] = useState(null);
   const dragStartRef = useRef(null);
 
-  const [processing, setProcessing] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const inputRef = useRef();
   const imgInputRef = useRef();
 
   const selectedLayer = layers.find(l => l.id === selectedId) || null;
@@ -96,6 +103,7 @@ export default function Watermark() {
     let cancelled = false;
     (async () => {
       try {
+        const pdfjsLib = await getPdfjsLib();
         const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
         const page = await pdf.getPage(1);
         const vp = page.getViewport({ scale: 1.0 });
@@ -129,11 +137,11 @@ export default function Watermark() {
     reader.readAsDataURL(f);
   };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragOver(false);
-    loadFile(e.dataTransfer.files[0]);
+  const customDropzoneProps = {
+    ...dropzoneProps,
+    onDrop: (e) => { e.preventDefault(); loadFile(e.dataTransfer.files[0]); },
   };
+  const customOnInputChange = (e) => { loadFile(e.target.files[0]); e.target.value = ''; };
 
   /* ── Dragging layers on preview ── */
   const handlePointerDown = useCallback((e, layerId) => {
@@ -273,7 +281,10 @@ export default function Watermark() {
       });
 
       const pdfOut = await doc.save();
-      saveAs(new Blob([pdfOut], { type: 'application/pdf' }), 'watermarked.pdf');
+      tool.exportBlob(new Blob([pdfOut], { type: 'application/pdf' }), 'watermarked.pdf');
+      // Clear custom state after export (reset() called by exportBlob)
+      setPdfBytes(null); setPreviewUrl(null);
+      setLayers([makeTextLayer()]); setSelectedId(null);
     } catch (err) {
       alert('Error: ' + err.message);
     } finally {
@@ -285,32 +296,18 @@ export default function Watermark() {
   return (
     <div>
       {!file ? (
-        <div
-          className={`dropzone${dragOver ? ' dragover' : ''}`}
-          onClick={() => inputRef.current?.click()}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-        >
-          <div className="dropzone-icon">{'\uD83D\uDCA7'}</div>
-          <div className="dropzone-text">
-            <strong>Drop a PDF file here</strong> or click to browse
-          </div>
-          <input ref={inputRef} type="file" accept=".pdf" hidden
-            onChange={e => { loadFile(e.target.files[0]); e.target.value = ''; }} />
-        </div>
+        <Dropzone
+          dragOver={dragOver}
+          dropzoneProps={customDropzoneProps}
+          inputRef={inputRef}
+          onInputChange={customOnInputChange}
+          icon={'\uD83D\uDCA7'}
+        />
       ) : (
         <>
-          {/* File info */}
-          <div className="file-list">
-            <div className="file-item">
-              <span className="file-name">{file.name}</span>
-              <span className="file-size">{formatSize(file.size)} &middot; {pageCount} pages</span>
-              <button className="file-remove" onClick={() => {
-                setFile(null); setPageCount(0); setPdfBytes(null); setPreviewUrl(null);
-              }}>{'\u00D7'}</button>
-            </div>
-          </div>
+          <FileInfo file={file} pageCount={pageCount} onRemove={() => {
+            reset(); setPdfBytes(null); setPreviewUrl(null);
+          }} />
 
           {/* Main layout: preview left, controls right */}
           <div style={{
@@ -555,16 +552,16 @@ export default function Watermark() {
             </div>
           </div>
 
-          <div className="action-row">
+          <ActionRow>
             <button className="btn btn-primary" disabled={processing || layers.length === 0} onClick={stamp}>
               {processing ? 'Processing...' : 'Add Watermark'}
             </button>
             <button className="btn btn-secondary" onClick={() => {
-              setFile(null); setPageCount(0); setPdfBytes(null); setPreviewUrl(null);
+              reset(); setPdfBytes(null); setPreviewUrl(null);
             }}>
               Choose another file
             </button>
-          </div>
+          </ActionRow>
         </>
       )}
     </div>

@@ -7,7 +7,7 @@ import { hexToRgb, parseRichText } from './helpers';
    usePdfExport hook
    Owns: processing state
    ================================================================ */
-export default function usePdfExport({ pdfBytesRef, pdfBytes, file, annotations, pageSize }) {
+export default function usePdfExport({ pdfBytesRef, pdfBytes, file, annotations, pageSize, onExported }) {
   const [processing, setProcessing] = useState(false);
 
   const exportPdf = useCallback(async () => {
@@ -127,12 +127,14 @@ export default function usePdfExport({ pdfBytesRef, pdfBytes, file, annotations,
       const outBytes = await doc.save();
       const name = file.name.replace(/\.pdf$/i, '') + '_edited.pdf';
       saveAs(new Blob([outBytes], { type: 'application/pdf' }), name);
+      // Clear session cache after successful export
+      if (onExported) onExported();
     } catch (err) {
       alert('Export error: ' + err.message);
     } finally {
       setProcessing(false);
     }
-  }, [pdfBytesRef, pdfBytes, file, annotations, pageSize]);
+  }, [pdfBytesRef, pdfBytes, file, annotations, pageSize, onExported]);
 
   return { exportPdf, processing };
 }

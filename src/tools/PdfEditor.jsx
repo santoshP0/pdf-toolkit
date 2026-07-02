@@ -314,7 +314,7 @@ export default function PdfEditor({ onBack, tool }) {
   }, [editingText,updateAnn,deleteAnn,addAnn,strokeColor,textSize,selectedFont,pageSize,setGuides,canvasRef]);
 
   /* ── Export ── */
-  const { exportPdf, processing } = usePdfExport({ pdfBytesRef, pdfBytes, file, annotations, pageSize });
+  const { exportPdf, processing } = usePdfExport({ pdfBytesRef, pdfBytes, file, annotations, pageSize, onExported: doClearWorkspace });
 
   /* ── Wheel / fitToWidth ── */
   const handleWheel = useCallback((e) => {

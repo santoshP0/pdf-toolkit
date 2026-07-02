@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { PDFDocument, degrees } from 'pdf-lib';
-import { saveAs } from 'file-saver';
-import { formatSize } from '../App';
+import usePdfTool from './shared/usePdfTool';
+import { Dropzone, FileInfo, ActionRow } from './shared/PdfToolUI';
 
 function getPdfjsLib() {
   return import('pdfjs-dist').then(mod => {
@@ -14,13 +14,17 @@ function getPdfjsLib() {
 }
 
 export default function OrganizePages() {
-  const [file, setFile] = useState(null);
+  const {
+    file, setFile,
+    processing, setProcessing,
+    dragOver, inputRef,
+    dropzoneProps, onInputChange,
+    exportPdfBytes, hasFile,
+  } = usePdfTool();
+
   const [pages, setPages] = useState([]);
-  const [processing, setProcessing] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
   const [dragIdx, setDragIdx] = useState(null);
-  const inputRef = useRef();
 
   const loadFile = async (f) => {
     if (!f || f.type !== 'application/pdf') return;
@@ -49,10 +53,18 @@ export default function OrganizePages() {
     }
   };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragOver(false);
-    loadFile(e.dataTransfer.files[0]);
+  /* Override dropzone/input to use custom loadFile */
+  const customDropzoneProps = {
+    ...dropzoneProps,
+    onDrop: (e) => {
+      e.preventDefault();
+      loadFile(e.dataTransfer.files[0]);
+    },
+  };
+
+  const customOnInputChange = (e) => {
+    loadFile(e.target.files[0]);
+    e.target.value = '';
   };
 
   const rotatePage = (i, deg) => {
@@ -98,8 +110,8 @@ export default function OrganizePages() {
         newDoc.addPage(page);
       });
       const pdfBytes = await newDoc.save();
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-      saveAs(blob, 'organized.pdf');
+      exportPdfBytes(pdfBytes, 'organized.pdf');
+      setPages([]);
     } catch (err) {
       alert('Error saving: ' + err.message);
     } finally {
@@ -111,37 +123,23 @@ export default function OrganizePages() {
 
   return (
     <div>
-      {!file ? (
-        <div
-          className={`dropzone${dragOver ? ' dragover' : ''}`}
-          onClick={() => inputRef.current?.click()}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-        >
-          <div className="dropzone-icon">{'🗃️'}</div>
-          <div className="dropzone-text">
-            <strong>Drop a PDF file here</strong> or click to browse
-          </div>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".pdf"
-            hidden
-            onChange={e => { loadFile(e.target.files[0]); e.target.value = ''; }}
-          />
-        </div>
+      {!hasFile ? (
+        <Dropzone
+          dragOver={dragOver}
+          dropzoneProps={customDropzoneProps}
+          inputRef={inputRef}
+          onInputChange={customOnInputChange}
+          icon={'\uD83D\uDDC3\uFE0F'}
+        />
       ) : loading ? (
         <div className="progress-text">Loading pages...</div>
       ) : (
         <>
-          <div className="file-list">
-            <div className="file-item">
-              <span className="file-name">{file.name}</span>
-              <span className="file-size">{formatSize(file.size)} &middot; {pages.length} pages</span>
-              <button className="file-remove" onClick={() => { setFile(null); setPages([]); }}>{'\u00D7'}</button>
-            </div>
-          </div>
+          <FileInfo
+            file={file}
+            pageCount={pages.length}
+            onRemove={() => { setFile(null); setPages([]); }}
+          />
 
           <div className="thumb-grid">
             {pages.map((p, i) => (
@@ -181,14 +179,14 @@ export default function OrganizePages() {
             ))}
           </div>
 
-          <div className="action-row">
+          <ActionRow>
             <button className="btn btn-primary" disabled={processing || activeCount === 0} onClick={save}>
               {processing ? 'Saving...' : `Save ${activeCount} pages`}
             </button>
             <button className="btn btn-secondary" onClick={() => { setFile(null); setPages([]); }}>
               Choose another file
             </button>
-          </div>
+          </ActionRow>
         </>
       )}
     </div>

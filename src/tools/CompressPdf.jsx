@@ -1,34 +1,20 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { PDFDocument } from 'pdf-lib';
-import { saveAs } from 'file-saver';
 import { formatSize } from '../App';
+import usePdfTool from './shared/usePdfTool';
+import { Dropzone, FileInfo, ProgressBar, ActionRow } from './shared/PdfToolUI';
 
 export default function CompressPdf() {
-  const [file, setFile] = useState(null);
-  const [pageCount, setPageCount] = useState(0);
-  const [processing, setProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const {
+    file, pageCount, processing, setProcessing, progress, setProgress,
+    dragOver, inputRef, dropzoneProps, onInputChange, reset, exportBlob, hasFile,
+  } = usePdfTool({ outputName: 'compressed.pdf' });
+
   const [result, setResult] = useState(null);
-  const [dragOver, setDragOver] = useState(false);
-  const inputRef = useRef();
 
-  const loadFile = async (f) => {
-    if (!f || f.type !== 'application/pdf') return;
-    setFile(f);
+  const handleRemove = () => {
     setResult(null);
-    try {
-      const bytes = await f.arrayBuffer();
-      const doc = await PDFDocument.load(bytes);
-      setPageCount(doc.getPageCount());
-    } catch (err) {
-      alert('Error loading: ' + err.message);
-    }
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragOver(false);
-    loadFile(e.dataTransfer.files[0]);
+    reset();
   };
 
   const compress = async () => {
@@ -80,48 +66,26 @@ export default function CompressPdf() {
   const download = () => {
     if (!result) return;
     const blob = new Blob([result.bytes], { type: 'application/pdf' });
-    saveAs(blob, 'compressed.pdf');
+    setResult(null);
+    exportBlob(blob);
   };
 
   return (
     <div>
-      {!file ? (
-        <div
-          className={`dropzone${dragOver ? ' dragover' : ''}`}
-          onClick={() => inputRef.current?.click()}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-        >
-          <div className="dropzone-icon">{'🗜️'}</div>
-          <div className="dropzone-text">
-            <strong>Drop a PDF file here</strong> or click to browse
-          </div>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".pdf"
-            hidden
-            onChange={e => { loadFile(e.target.files[0]); e.target.value = ''; }}
-          />
-        </div>
+      {!hasFile ? (
+        <Dropzone
+          dragOver={dragOver}
+          dropzoneProps={dropzoneProps}
+          inputRef={inputRef}
+          onInputChange={onInputChange}
+          icon={'\uD83D\uDDDC\uFE0F'}
+        />
       ) : (
         <>
-          <div className="file-list">
-            <div className="file-item">
-              <span className="file-name">{file.name}</span>
-              <span className="file-size">{formatSize(file.size)} &middot; {pageCount} pages</span>
-              <button className="file-remove" onClick={() => { setFile(null); setPageCount(0); setResult(null); }}>{'\u00D7'}</button>
-            </div>
-          </div>
+          <FileInfo file={file} pageCount={pageCount} onRemove={handleRemove} />
 
           {processing && (
-            <>
-              <div className="progress-text">Compressing... {progress}%</div>
-              <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${progress}%` }} />
-              </div>
-            </>
+            <ProgressBar progress={progress} label="Compressing..." />
           )}
 
           {result && (
@@ -154,7 +118,7 @@ export default function CompressPdf() {
             </div>
           )}
 
-          <div className="action-row" style={{ marginTop: result ? '1rem' : 0 }}>
+          <ActionRow>
             {!result ? (
               <button className="btn btn-primary" disabled={processing} onClick={compress}>
                 {processing ? 'Compressing...' : 'Compress PDF'}
@@ -164,10 +128,10 @@ export default function CompressPdf() {
                 Download compressed PDF
               </button>
             )}
-            <button className="btn btn-secondary" onClick={() => { setFile(null); setPageCount(0); setResult(null); }}>
+            <button className="btn btn-secondary" onClick={handleRemove}>
               Choose another file
             </button>
-          </div>
+          </ActionRow>
         </>
       )}
     </div>

@@ -1,36 +1,53 @@
-import { useState, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { PDFDocument } from 'pdf-lib';
-import { saveAs } from 'file-saver';
-import { formatSize } from '../App';
+import usePdfTool from './shared/usePdfTool';
+import { Dropzone, FileInfo, ProgressBar, ActionRow } from './shared/PdfToolUI';
 
 export default function SplitPdf() {
-  const [file, setFile] = useState(null);
-  const [pageCount, setPageCount] = useState(0);
   const [ranges, setRanges] = useState('');
-  const [processing, setProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [dragOver, setDragOver] = useState(false);
-  const inputRef = useRef();
 
-  const loadFile = async (f) => {
-    if (!f || f.type !== 'application/pdf') return;
-    setFile(f);
-    try {
-      const bytes = await f.arrayBuffer();
-      const doc = await PDFDocument.load(bytes);
-      const count = doc.getPageCount();
-      setPageCount(count);
-      setRanges(`1-${count}`);
-    } catch (err) {
-      alert('Error loading PDF: ' + err.message);
+  const tool = usePdfTool({ outputName: 'split.pdf' });
+  const {
+    file, pageCount, setPageCount,
+    processing, setProcessing,
+    progress, setProgress,
+    dragOver, inputRef,
+    loadFile: baseLoadFile,
+    dropzoneProps, onInputChange,
+    reset: baseReset,
+    exportPdfBytes, hasFile,
+  } = tool;
+
+  const loadFile = useCallback(async (f) => {
+    await baseLoadFile(f);
+    if (f && f.type === 'application/pdf') {
+      try {
+        const bytes = await f.arrayBuffer();
+        const doc = await PDFDocument.load(bytes);
+        const count = doc.getPageCount();
+        setPageCount(count);
+        setRanges(`1-${count}`);
+      } catch { /* handled by base */ }
     }
+  }, [baseLoadFile, setPageCount]);
+
+  const reset = useCallback(() => {
+    baseReset();
+    setRanges('');
+  }, [baseReset]);
+
+  const wrappedDropzoneProps = {
+    ...dropzoneProps,
+    onDrop: (e) => {
+      e.preventDefault();
+      loadFile(e.dataTransfer.files[0]);
+    },
   };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragOver(false);
-    loadFile(e.dataTransfer.files[0]);
-  };
+  const wrappedOnInputChange = useCallback((e) => {
+    loadFile(e.target.files[0]);
+    e.target.value = '';
+  }, [loadFile]);
 
   const parseRanges = (str, max) => {
     const parts = str.split(',').map(s => s.trim()).filter(Boolean);
@@ -72,8 +89,7 @@ export default function SplitPdf() {
         setProgress(Math.round(((i + 1) / copiedPages.length) * 100));
       });
       const pdfBytes = await newDoc.save();
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-      saveAs(blob, 'split.pdf');
+      exportPdfBytes(pdfBytes, 'split.pdf');
     } catch (err) {
       alert('Error splitting: ' + err.message);
     } finally {
@@ -83,35 +99,18 @@ export default function SplitPdf() {
 
   return (
     <div>
-      {!file ? (
-        <div
-          className={`dropzone${dragOver ? ' dragover' : ''}`}
-          onClick={() => inputRef.current?.click()}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-        >
-          <div className="dropzone-icon">{'\u2702\uFE0F'}</div>
-          <div className="dropzone-text">
-            <strong>Drop a PDF file here</strong> or click to browse
-          </div>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".pdf"
-            hidden
-            onChange={e => { loadFile(e.target.files[0]); e.target.value = ''; }}
-          />
-        </div>
+      {!hasFile ? (
+        <Dropzone
+          dragOver={dragOver}
+          dropzoneProps={wrappedDropzoneProps}
+          inputRef={inputRef}
+          onInputChange={wrappedOnInputChange}
+          icon={'\u2702\uFE0F'}
+          accept=".pdf"
+        />
       ) : (
         <>
-          <div className="file-list">
-            <div className="file-item">
-              <span className="file-name">{file.name}</span>
-              <span className="file-size">{formatSize(file.size)} &middot; {pageCount} pages</span>
-              <button className="file-remove" onClick={() => { setFile(null); setPageCount(0); }}>{'\u00D7'}</button>
-            </div>
-          </div>
+          <FileInfo file={file} pageCount={pageCount} onRemove={reset} />
 
           <div className="controls">
             <h3>Page ranges</h3>
@@ -134,23 +133,16 @@ export default function SplitPdf() {
             </div>
           </div>
 
-          {processing && (
-            <>
-              <div className="progress-text">Splitting... {progress}%</div>
-              <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${progress}%` }} />
-              </div>
-            </>
-          )}
+          {processing && <ProgressBar progress={progress} label="Splitting..." />}
 
-          <div className="action-row">
+          <ActionRow>
             <button className="btn btn-primary" disabled={processing || !ranges.trim()} onClick={split}>
               {processing ? 'Splitting...' : 'Split & Download'}
             </button>
-            <button className="btn btn-secondary" onClick={() => { setFile(null); setPageCount(0); }}>
+            <button className="btn btn-secondary" onClick={reset}>
               Choose another file
             </button>
-          </div>
+          </ActionRow>
         </>
       )}
     </div>

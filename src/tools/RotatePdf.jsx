@@ -1,7 +1,7 @@
-import { useState, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { PDFDocument, degrees } from 'pdf-lib';
-import { saveAs } from 'file-saver';
-import { formatSize } from '../App';
+import usePdfTool from './shared/usePdfTool';
+import { Dropzone, FileInfo, ActionRow } from './shared/PdfToolUI';
 
 function getPdfjsLib() {
   return import('pdfjs-dist').then(mod => {
@@ -14,15 +14,19 @@ function getPdfjsLib() {
 }
 
 export default function RotatePdf() {
-  const [file, setFile] = useState(null);
+  const {
+    file, setFile,
+    processing, setProcessing,
+    dragOver, inputRef,
+    dropzoneProps,
+    exportPdfBytes,
+  } = usePdfTool();
+
   const [pages, setPages] = useState([]);
-  const [processing, setProcessing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [rotateAll, setRotateAll] = useState(90);
-  const [dragOver, setDragOver] = useState(false);
-  const inputRef = useRef();
 
-  const loadFile = async (f) => {
+  const loadFile = useCallback(async (f) => {
     if (!f || f.type !== 'application/pdf') return;
     setFile(f);
     setLoading(true);
@@ -47,13 +51,20 @@ export default function RotatePdf() {
     } finally {
       setLoading(false);
     }
+  }, [setFile]);
+
+  const customDropzoneProps = {
+    ...dropzoneProps,
+    onDrop: (e) => {
+      e.preventDefault();
+      loadFile(e.dataTransfer.files[0]);
+    },
   };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragOver(false);
-    loadFile(e.dataTransfer.files[0]);
-  };
+  const handleInputChange = useCallback((e) => {
+    loadFile(e.target.files[0]);
+    e.target.value = '';
+  }, [loadFile]);
 
   const rotatePage = (i, deg) => {
     setPages(prev => prev.map((p, idx) => idx === i ? { ...p, rotation: (p.rotation + deg + 360) % 360 } : p));
@@ -77,8 +88,8 @@ export default function RotatePdf() {
         }
       });
       const pdfBytes = await doc.save();
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-      saveAs(blob, 'rotated.pdf');
+      exportPdfBytes(pdfBytes, 'rotated.pdf');
+      setPages([]);
     } catch (err) {
       alert('Error saving: ' + err.message);
     } finally {
@@ -86,47 +97,38 @@ export default function RotatePdf() {
     }
   };
 
+  const handleReset = () => {
+    setFile(null);
+    setPages([]);
+  };
+
   return (
     <div>
       {!file ? (
-        <div
-          className={`dropzone${dragOver ? ' dragover' : ''}`}
-          onClick={() => inputRef.current?.click()}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-        >
-          <div className="dropzone-icon">{'🔄'}</div>
-          <div className="dropzone-text">
-            <strong>Drop a PDF file here</strong> or click to browse
-          </div>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".pdf"
-            hidden
-            onChange={e => { loadFile(e.target.files[0]); e.target.value = ''; }}
-          />
-        </div>
+        <Dropzone
+          dragOver={dragOver}
+          dropzoneProps={customDropzoneProps}
+          inputRef={inputRef}
+          onInputChange={handleInputChange}
+          icon={'\uD83D\uDD04'}
+        />
       ) : loading ? (
         <div className="progress-text">Loading pages...</div>
       ) : (
         <>
-          <div className="file-list">
-            <div className="file-item">
-              <span className="file-name">{file.name}</span>
-              <span className="file-size">{formatSize(file.size)} &middot; {pages.length} pages</span>
-              <button className="file-remove" onClick={() => { setFile(null); setPages([]); }}>{'\u00D7'}</button>
-            </div>
-          </div>
+          <FileInfo
+            file={file}
+            pageCount={pages.length}
+            onRemove={handleReset}
+          />
 
           <div className="controls">
             <h3>Rotate all pages</h3>
             <div className="control-row">
               <select className="control-select" value={rotateAll} onChange={e => setRotateAll(Number(e.target.value))}>
-                <option value={90}>90\u00B0 clockwise</option>
-                <option value={180}>180\u00B0</option>
-                <option value={270}>90\u00B0 counter-clockwise</option>
+                <option value={90}>90&deg; clockwise</option>
+                <option value={180}>180&deg;</option>
+                <option value={270}>90&deg; counter-clockwise</option>
               </select>
               <button className="btn btn-secondary" onClick={rotateAllPages}>Apply to all</button>
             </div>
@@ -155,14 +157,14 @@ export default function RotatePdf() {
             ))}
           </div>
 
-          <div className="action-row">
+          <ActionRow>
             <button className="btn btn-primary" disabled={processing} onClick={save}>
               {processing ? 'Saving...' : 'Save Rotated PDF'}
             </button>
-            <button className="btn btn-secondary" onClick={() => { setFile(null); setPages([]); }}>
+            <button className="btn btn-secondary" onClick={handleReset}>
               Choose another file
             </button>
-          </div>
+          </ActionRow>
         </>
       )}
     </div>

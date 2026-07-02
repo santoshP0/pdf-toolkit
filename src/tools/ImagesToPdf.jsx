@@ -1,22 +1,27 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { PDFDocument } from 'pdf-lib';
-import { saveAs } from 'file-saver';
-import { formatSize } from '../App';
+import usePdfTool from './shared/usePdfTool';
+import { Dropzone, ProgressBar, ActionRow } from './shared/PdfToolUI';
 
 export default function ImagesToPdf() {
+  const {
+    processing, setProcessing,
+    progress, setProgress,
+    dragOver, inputRef,
+    dropzoneProps,
+    exportPdfBytes,
+  } = usePdfTool({ multi: true, acceptTypes: ['image/jpeg', 'image/png'], outputName: 'images.pdf' });
+
+  /* ── Custom file state (stores {file, preview} objects) ── */
   const [files, setFiles] = useState([]);
-  const [processing, setProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [dragOver, setDragOver] = useState(false);
   const [dragIdx, setDragIdx] = useState(null);
-  const inputRef = useRef();
 
   const addFiles = (newFiles) => {
     const imgs = Array.from(newFiles).filter(f => f.type.startsWith('image/'));
-    const withPreviews = imgs.map(f => {
-      const url = URL.createObjectURL(f);
-      return { file: f, preview: url };
-    });
+    const withPreviews = imgs.map(f => ({
+      file: f,
+      preview: URL.createObjectURL(f),
+    }));
     setFiles(prev => [...prev, ...withPreviews]);
   };
 
@@ -27,12 +32,19 @@ export default function ImagesToPdf() {
     });
   };
 
+  /* ── Custom drop / input handlers (bypass hook's loadFiles) ── */
   const handleDrop = (e) => {
     e.preventDefault();
-    setDragOver(false);
+    dropzoneProps.onDragLeave();
     addFiles(e.dataTransfer.files);
   };
 
+  const onInputChange = (e) => {
+    addFiles(e.target.files);
+    e.target.value = '';
+  };
+
+  /* ── Drag reorder ── */
   const handleDragStart = (e, idx) => {
     setDragIdx(idx);
     e.dataTransfer.effectAllowed = 'move';
@@ -50,6 +62,7 @@ export default function ImagesToPdf() {
     setDragIdx(idx);
   };
 
+  /* ── Convert ── */
   const convert = async () => {
     if (files.length === 0) return;
     setProcessing(true);
@@ -59,19 +72,17 @@ export default function ImagesToPdf() {
       for (let i = 0; i < files.length; i++) {
         const bytes = await files[i].file.arrayBuffer();
         const type = files[i].file.type;
-        let img;
-        if (type === 'image/png') {
-          img = await doc.embedPng(bytes);
-        } else {
-          img = await doc.embedJpg(bytes);
-        }
+        const img = type === 'image/png'
+          ? await doc.embedPng(bytes)
+          : await doc.embedJpg(bytes);
         const page = doc.addPage([img.width, img.height]);
         page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
         setProgress(Math.round(((i + 1) / files.length) * 100));
       }
       const pdfBytes = await doc.save();
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-      saveAs(blob, 'images.pdf');
+      exportPdfBytes(pdfBytes, 'images.pdf');
+      files.forEach(f => URL.revokeObjectURL(f.preview));
+      setFiles([]);
     } catch (err) {
       alert('Error converting: ' + err.message);
     } finally {
@@ -79,28 +90,23 @@ export default function ImagesToPdf() {
     }
   };
 
+  const clearAll = () => {
+    files.forEach(f => URL.revokeObjectURL(f.preview));
+    setFiles([]);
+  };
+
   return (
     <div>
-      <div
-        className={`dropzone${dragOver ? ' dragover' : ''}`}
-        onClick={() => inputRef.current?.click()}
-        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-      >
-        <div className="dropzone-icon">{'🖼️'}</div>
-        <div className="dropzone-text">
-          <strong>Drop images here</strong> or click to browse (JPG, PNG)
-        </div>
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/jpeg,image/png"
-          multiple
-          hidden
-          onChange={e => { addFiles(e.target.files); e.target.value = ''; }}
-        />
-      </div>
+      <Dropzone
+        dragOver={dragOver}
+        dropzoneProps={{ ...dropzoneProps, onDrop: handleDrop }}
+        inputRef={inputRef}
+        onInputChange={onInputChange}
+        icon={'\uD83D\uDDBC\uFE0F'}
+        label="Drop images here"
+        accept="image/jpeg,image/png"
+        multi
+      />
 
       {files.length > 0 && (
         <div className="thumb-grid">
@@ -123,25 +129,18 @@ export default function ImagesToPdf() {
         </div>
       )}
 
-      {processing && (
-        <>
-          <div className="progress-text">Converting... {progress}%</div>
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${progress}%` }} />
-          </div>
-        </>
-      )}
+      {processing && <ProgressBar progress={progress} label="Converting..." />}
 
-      <div className="action-row">
+      <ActionRow>
         <button className="btn btn-primary" disabled={files.length === 0 || processing} onClick={convert}>
           {processing ? 'Converting...' : `Create PDF (${files.length} images)`}
         </button>
         {files.length > 0 && (
-          <button className="btn btn-secondary" onClick={() => { files.forEach(f => URL.revokeObjectURL(f.preview)); setFiles([]); }}>
+          <button className="btn btn-secondary" onClick={clearAll}>
             Clear all
           </button>
         )}
-      </div>
+      </ActionRow>
     </div>
   );
 }

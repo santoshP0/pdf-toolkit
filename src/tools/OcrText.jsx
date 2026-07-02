@@ -1,14 +1,21 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
+import usePdfTool from './shared/usePdfTool';
+import { Dropzone, FileInfo, ProgressBar, ActionRow } from './shared/PdfToolUI';
 
 export default function OcrText() {
-  const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState(null);
-  const [processing, setProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [statusMsg, setStatusMsg] = useState('');
+  const {
+    file, setFile,
+    processing, setProcessing,
+    progress, setProgress,
+    dragOver, inputRef,
+    dropzoneProps,
+    reset,
+    hasFile,
+  } = usePdfTool({ acceptTypes: ['application/pdf', 'image/*'] });
+
   const [text, setText] = useState('');
-  const [dragOver, setDragOver] = useState(false);
-  const inputRef = useRef();
+  const [preview, setPreview] = useState(null);
+  const [statusMsg, setStatusMsg] = useState('');
 
   const loadFile = (f) => {
     if (!f) return;
@@ -29,8 +36,18 @@ export default function OcrText() {
 
   const handleDrop = (e) => {
     e.preventDefault();
-    setDragOver(false);
     loadFile(e.dataTransfer.files[0]);
+  };
+
+  const onInputChange = (e) => {
+    loadFile(e.target.files[0]);
+    e.target.value = '';
+  };
+
+  const handleReset = () => {
+    reset();
+    setText('');
+    setPreview(null);
   };
 
   const runOcr = async () => {
@@ -102,37 +119,29 @@ export default function OcrText() {
     });
   };
 
+  const customDropzoneProps = {
+    ...dropzoneProps,
+    onDrop: handleDrop,
+  };
+
   return (
     <div>
-      {!file ? (
-        <div
-          className={`dropzone${dragOver ? ' dragover' : ''}`}
-          onClick={() => inputRef.current?.click()}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-        >
-          <div className="dropzone-icon">{'🔍'}</div>
-          <div className="dropzone-text">
-            <strong>Drop a PDF or image here</strong> or click to browse
-          </div>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".pdf,image/*"
-            hidden
-            onChange={e => { loadFile(e.target.files[0]); e.target.value = ''; }}
-          />
-        </div>
+      {!hasFile ? (
+        <Dropzone
+          dragOver={dragOver}
+          dropzoneProps={customDropzoneProps}
+          inputRef={inputRef}
+          onInputChange={onInputChange}
+          icon={'\uD83D\uDD0D'}
+          label="Drop a PDF or image here"
+          accept=".pdf,image/*"
+        />
       ) : (
         <>
-          <div className="file-list">
-            <div className="file-item">
-              <span className="file-name">{file.name}</span>
-              <span className="file-size">{(file.size / 1024).toFixed(1)} KB</span>
-              <button className="file-remove" onClick={() => { setFile(null); setText(''); setPreview(null); }}>{'\u00D7'}</button>
-            </div>
-          </div>
+          <FileInfo
+            file={file}
+            onRemove={handleReset}
+          />
 
           {preview && (
             <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
@@ -141,15 +150,10 @@ export default function OcrText() {
           )}
 
           {processing && (
-            <>
-              <div className="progress-text">{statusMsg} {progress}%</div>
-              <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${progress}%` }} />
-              </div>
-            </>
+            <ProgressBar progress={progress} label={statusMsg} />
           )}
 
-          <div className="action-row">
+          <ActionRow>
             <button className="btn btn-primary" disabled={processing} onClick={runOcr}>
               {processing ? 'Processing...' : 'Extract Text'}
             </button>
@@ -158,10 +162,10 @@ export default function OcrText() {
                 Copy text
               </button>
             )}
-            <button className="btn btn-secondary" onClick={() => { setFile(null); setText(''); setPreview(null); }}>
+            <button className="btn btn-secondary" onClick={handleReset}>
               Choose another file
             </button>
-          </div>
+          </ActionRow>
 
           {text && (
             <div className="result-area">

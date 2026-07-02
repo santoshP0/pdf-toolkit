@@ -1,31 +1,22 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { PDFDocument } from 'pdf-lib';
-import { saveAs } from 'file-saver';
 import { formatSize } from '../App';
+import usePdfTool from './shared/usePdfTool';
+import { Dropzone, ProgressBar, ActionRow } from './shared/PdfToolUI';
 
 export default function MergePdf() {
-  const [files, setFiles] = useState([]);
-  const [processing, setProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const {
+    file: files, setFile: setFiles,
+    processing, setProcessing,
+    progress, setProgress,
+    dragOver, inputRef,
+    dropzoneProps, onInputChange,
+    exportPdfBytes,
+  } = usePdfTool({ multi: true });
+
   const [dragIdx, setDragIdx] = useState(null);
-  const [dragOver, setDragOver] = useState(false);
-  const inputRef = useRef();
 
-  const addFiles = (newFiles) => {
-    const pdfs = Array.from(newFiles).filter(f => f.type === 'application/pdf');
-    setFiles(prev => [...prev, ...pdfs]);
-  };
-
-  const removeFile = (idx) => {
-    setFiles(prev => prev.filter((_, i) => i !== idx));
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragOver(false);
-    addFiles(e.dataTransfer.files);
-  };
-
+  /* ── Reorder drag handlers ── */
   const handleDragStart = (e, idx) => {
     setDragIdx(idx);
     e.dataTransfer.effectAllowed = 'move';
@@ -43,6 +34,11 @@ export default function MergePdf() {
     setDragIdx(idx);
   };
 
+  const removeFile = (idx) => {
+    setFiles(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  /* ── Merge ── */
   const merge = async () => {
     if (files.length < 2) return;
     setProcessing(true);
@@ -57,8 +53,7 @@ export default function MergePdf() {
         setProgress(Math.round(((i + 1) / files.length) * 100));
       }
       const pdfBytes = await merged.save();
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-      saveAs(blob, 'merged.pdf');
+      exportPdfBytes(pdfBytes, 'merged.pdf');
     } catch (err) {
       alert('Error merging: ' + err.message);
     } finally {
@@ -68,26 +63,15 @@ export default function MergePdf() {
 
   return (
     <div>
-      <div
-        className={`dropzone${dragOver ? ' dragover' : ''}`}
-        onClick={() => inputRef.current?.click()}
-        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-      >
-        <div className="dropzone-icon">{'📄'}</div>
-        <div className="dropzone-text">
-          <strong>Drop PDF files here</strong> or click to browse
-        </div>
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".pdf"
-          multiple
-          hidden
-          onChange={e => { addFiles(e.target.files); e.target.value = ''; }}
-        />
-      </div>
+      <Dropzone
+        dragOver={dragOver}
+        dropzoneProps={dropzoneProps}
+        inputRef={inputRef}
+        onInputChange={onInputChange}
+        icon={'\uD83D\uDCC4'}
+        label="Drop PDF files here"
+        multi
+      />
 
       {files.length > 0 && (
         <div className="file-list">
@@ -110,15 +94,10 @@ export default function MergePdf() {
       )}
 
       {processing && (
-        <>
-          <div className="progress-text">Merging... {progress}%</div>
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${progress}%` }} />
-          </div>
-        </>
+        <ProgressBar progress={progress} label="Merging..." />
       )}
 
-      <div className="action-row">
+      <ActionRow>
         <button
           className="btn btn-primary"
           disabled={files.length < 2 || processing}
@@ -131,7 +110,7 @@ export default function MergePdf() {
             Clear all
           </button>
         )}
-      </div>
+      </ActionRow>
     </div>
   );
 }
