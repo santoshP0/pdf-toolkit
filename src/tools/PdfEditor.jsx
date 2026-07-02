@@ -520,6 +520,7 @@ export default function PdfEditor({ onBack, tool }) {
   const [zoom, setZoom] = useState(1.0);
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [pageReady, setPageReady] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
   /* Tool state */
@@ -585,9 +586,14 @@ export default function PdfEditor({ onBack, tool }) {
   const textInputRef = useRef();
   const pdfBytesRef = useRef(null);
   const isInteractingWithToolbarRef = useRef(false);
+  const rafRef = useRef(null);
+  const selectedIdxRef = useRef(selectedIdx);
+  const currentPageRef = useRef(currentPage);
+  selectedIdxRef.current = selectedIdx;
+  currentPageRef.current = currentPage;
 
-  const pageAnns = annotations[currentPage] || [];
-  const totalAnns = Object.values(annotations).reduce((s, a) => s + a.length, 0);
+  const pageAnns = useMemo(() => annotations[currentPage] || [], [annotations, currentPage]);
+  const totalAnns = useMemo(() => Object.values(annotations).reduce((s, a) => s + a.length, 0), [annotations]);
 
   /* ================================================================
      History management
@@ -613,99 +619,84 @@ export default function PdfEditor({ onBack, tool }) {
     });
   }, [pushHistory]);
 
-  const setStrokeColorSync = (val) => {
+  const syncAnnProp = useCallback((prop, val) => {
+    const idx = selectedIdxRef.current;
+    const pg = currentPageRef.current;
+    if (idx === null) return;
+    setAnnsH(prev => {
+      const list = [...(prev[pg] || [])];
+      if (list[idx]) list[idx] = { ...list[idx], [prop]: val };
+      return { ...prev, [pg]: list };
+    });
+  }, [setAnnsH]);
+
+  const setStrokeColorSync = useCallback((val) => {
     setStrokeColor(val);
-    if (selectedIdx !== null) {
-      setAnnsH(prev => {
-        const list = [...(prev[currentPage] || [])];
-        if (list[selectedIdx]) {
-          list[selectedIdx] = { ...list[selectedIdx], color: val };
-        }
-        return { ...prev, [currentPage]: list };
-      });
-    }
-  };
+    syncAnnProp('color', val);
+  }, [syncAnnProp]);
 
-  const setFillColorSync = (val) => {
+  const setFillColorSync = useCallback((val) => {
     setFillColor(val);
-    if (selectedIdx !== null) {
-      setAnnsH(prev => {
-        const list = [...(prev[currentPage] || [])];
-        if (list[selectedIdx]) {
-          list[selectedIdx] = { ...list[selectedIdx], fillColor: val };
-        }
-        return { ...prev, [currentPage]: list };
-      });
-    }
-  };
+    syncAnnProp('fillColor', val);
+  }, [syncAnnProp]);
 
-  const setStrokeWidthSync = (val) => {
+  const setStrokeWidthSync = useCallback((val) => {
     setStrokeWidth(val);
-    if (selectedIdx !== null) {
-      setAnnsH(prev => {
-        const list = [...(prev[currentPage] || [])];
-        if (list[selectedIdx]) {
-          list[selectedIdx] = { ...list[selectedIdx], strokeWidth: val };
-        }
-        return { ...prev, [currentPage]: list };
-      });
-    }
-  };
+    syncAnnProp('strokeWidth', val);
+  }, [syncAnnProp]);
 
-  const setTextSizeSync = (val) => {
+  const setTextSizeSync = useCallback((val) => {
     setTextSize(val);
-    if (selectedIdx !== null) {
-      setAnnsH(prev => {
-        const list = [...(prev[currentPage] || [])];
-        if (list[selectedIdx] && list[selectedIdx].type === 'text') {
-          list[selectedIdx] = { ...list[selectedIdx], fontSize: val };
-        }
-        return { ...prev, [currentPage]: list };
-      });
-    }
-  };
+    const idx = selectedIdxRef.current;
+    const pg = currentPageRef.current;
+    if (idx === null) return;
+    setAnnsH(prev => {
+      const list = [...(prev[pg] || [])];
+      if (list[idx] && list[idx].type === 'text') list[idx] = { ...list[idx], fontSize: val };
+      return { ...prev, [pg]: list };
+    });
+  }, [setAnnsH]);
 
-  const setSelectedFontSync = (val) => {
+  const setSelectedFontSync = useCallback((val) => {
     setSelectedFont(val);
-    if (selectedIdx !== null) {
-      setAnnsH(prev => {
-        const list = [...(prev[currentPage] || [])];
-        if (list[selectedIdx] && list[selectedIdx].type === 'text') {
-          const resolved = val === 'auto'
-            ? (list[selectedIdx].detectedFont || '"Times New Roman", serif')
-            : (FONT_OPTIONS.find(f => f.id === val)?.css || '"Times New Roman", serif');
-          list[selectedIdx] = { ...list[selectedIdx], fontFamily: resolved };
-        }
-        return { ...prev, [currentPage]: list };
-      });
-    }
-  };
+    const idx = selectedIdxRef.current;
+    const pg = currentPageRef.current;
+    if (idx === null) return;
+    setAnnsH(prev => {
+      const list = [...(prev[pg] || [])];
+      if (list[idx] && list[idx].type === 'text') {
+        const resolved = val === 'auto'
+          ? (list[idx].detectedFont || '"Times New Roman", serif')
+          : (FONT_OPTIONS.find(f => f.id === val)?.css || '"Times New Roman", serif');
+        list[idx] = { ...list[idx], fontFamily: resolved };
+      }
+      return { ...prev, [pg]: list };
+    });
+  }, [setAnnsH]);
 
-  const setTextBoldSync = (val) => {
+  const setTextBoldSync = useCallback((val) => {
     setTextBold(val);
-    if (selectedIdx !== null) {
-      setAnnsH(prev => {
-        const list = [...(prev[currentPage] || [])];
-        if (list[selectedIdx] && list[selectedIdx].type === 'text') {
-          list[selectedIdx] = { ...list[selectedIdx], fontWeight: val ? 700 : 400 };
-        }
-        return { ...prev, [currentPage]: list };
-      });
-    }
-  };
+    const idx = selectedIdxRef.current;
+    const pg = currentPageRef.current;
+    if (idx === null) return;
+    setAnnsH(prev => {
+      const list = [...(prev[pg] || [])];
+      if (list[idx] && list[idx].type === 'text') list[idx] = { ...list[idx], fontWeight: val ? 700 : 400 };
+      return { ...prev, [pg]: list };
+    });
+  }, [setAnnsH]);
 
-  const setTextItalicSync = (val) => {
+  const setTextItalicSync = useCallback((val) => {
     setTextItalic(val);
-    if (selectedIdx !== null) {
-      setAnnsH(prev => {
-        const list = [...(prev[currentPage] || [])];
-        if (list[selectedIdx] && list[selectedIdx].type === 'text') {
-          list[selectedIdx] = { ...list[selectedIdx], fontStyle: val ? 'italic' : 'normal' };
-        }
-        return { ...prev, [currentPage]: list };
-      });
-    }
-  };
+    const idx = selectedIdxRef.current;
+    const pg = currentPageRef.current;
+    if (idx === null) return;
+    setAnnsH(prev => {
+      const list = [...(prev[pg] || [])];
+      if (list[idx] && list[idx].type === 'text') list[idx] = { ...list[idx], fontStyle: val ? 'italic' : 'normal' };
+      return { ...prev, [pg]: list };
+    });
+  }, [setAnnsH]);
 
   const undo = useCallback(() => {
     if (historyIdx <= 0) return;
@@ -779,17 +770,19 @@ export default function PdfEditor({ onBack, tool }) {
 
   // Restore session from IndexedDB and localStorage on mount
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         const saved = await loadPDFFromDB();
+        if (cancelled) return;
         if (saved && saved.bytes && saved.name) {
           const savedPage = localStorage.getItem('pdf_editor_current_page');
           const savedAnns = localStorage.getItem('pdf_editor_annotations');
           const savedZoom = localStorage.getItem('pdf_editor_zoom');
-          
+
           let initialPage = 1;
           if (savedPage) initialPage = parseInt(savedPage, 10);
-          
+
           let initialAnns = {};
           if (savedAnns) {
             try {
@@ -798,16 +791,17 @@ export default function PdfEditor({ onBack, tool }) {
               console.error('Failed to parse saved annotations:', e);
             }
           }
-          
+
           let initialZoom = 1.0;
           if (savedZoom) initialZoom = parseFloat(savedZoom);
-          
-          await loadFile(null, saved.bytes, saved.name, initialAnns, initialPage, initialZoom);
+
+          if (!cancelled) await loadFile(null, saved.bytes, saved.name, initialAnns, initialPage, initialZoom);
         }
       } catch (e) {
         console.error('Error loading saved PDF session:', e);
       }
     })();
+    return () => { cancelled = true; };
   }, []);
 
   // Auto-save session state to localStorage
@@ -825,15 +819,24 @@ export default function PdfEditor({ onBack, tool }) {
   useEffect(() => {
     if (!pdfDoc || !canvasRef.current) return;
     let cancelled = false;
+    setPageReady(false);
     (async () => {
       const page = await pdfDoc.getPage(currentPage);
+      if (cancelled) return;
       const vp = page.getViewport({ scale: renderScale });
       const canvas = canvasRef.current;
+      if (!canvas || cancelled) return;
+      // Use offscreen canvas to render, then copy — avoids flicker and
+      // prevents concurrent renders from corrupting the visible canvas
+      const off = new OffscreenCanvas(vp.width, vp.height);
+      await page.render({ canvasContext: off.getContext('2d'), viewport: vp }).promise;
+      if (cancelled || !canvasRef.current) return;
+      // Commit to visible canvas only after render completes
       canvas.width = vp.width;
       canvas.height = vp.height;
+      canvas.getContext('2d').drawImage(off, 0, 0);
       setPageSize({ width: vp.width, height: vp.height });
-      const ctx = canvas.getContext('2d');
-      if (!cancelled) await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      setPageReady(true);
     })();
     return () => { cancelled = true; };
   }, [pdfDoc, currentPage, renderScale]);
@@ -1091,7 +1094,7 @@ export default function PdfEditor({ onBack, tool }) {
      ================================================================ */
   const drawOverlay = useCallback(() => {
     const canvas = overlayRef.current;
-    if (!canvas || !pageSize.width) return;
+    if (!canvas || !pageSize.width || !pageReady) return;
     canvas.width = pageSize.width;
     canvas.height = pageSize.height;
     const ctx = canvas.getContext('2d');
@@ -1364,11 +1367,15 @@ export default function PdfEditor({ onBack, tool }) {
       }
       ctx.restore();
     }
-  }, [pageAnns, pageSize, isDrawing, currentPath, shapePreview, strokeColor,
+  }, [pageAnns, pageSize, pageReady, isDrawing, currentPath, shapePreview, strokeColor,
       strokeWidth, selectedIdx, activeTool, editingText, guides, pdfTextItems,
       hoveredTextItem]);
 
-  useEffect(() => { drawOverlay(); }, [drawOverlay]);
+  useEffect(() => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => { drawOverlay(); rafRef.current = null; });
+    return () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; } };
+  }, [drawOverlay]);
 
   /* ================================================================
      Canvas coordinate helpers
@@ -1716,7 +1723,7 @@ export default function PdfEditor({ onBack, tool }) {
   }, [isPanning, draggingIdx, isDrawing, activeTool, currentPath, shapePreview,
       strokeColor, fillColor, strokeWidth, addAnn, pushHistory]);
 
-  const handleEditorFormat = (tag) => {
+  const handleEditorFormat = useCallback((tag) => {
     const el = textInputRef.current;
     if (el) {
       const start = el.selectionStart;
@@ -1726,18 +1733,18 @@ export default function PdfEditor({ onBack, tool }) {
         const selectedText = text.substring(start, end);
         const openTag = `<${tag}>`;
         const closeTag = `</${tag}>`;
-        
+
         let newSelectedText;
         if (selectedText.startsWith(openTag) && selectedText.endsWith(closeTag)) {
           newSelectedText = selectedText.substring(openTag.length, selectedText.length - closeTag.length);
         } else {
           newSelectedText = `${openTag}${selectedText}${closeTag}`;
         }
-        
+
         const newValue = text.substring(0, start) + newSelectedText + text.substring(end);
-        
+
         setEditingText(prev => ({ ...prev, value: newValue }));
-        
+
         // Restore focus and selection range
         requestAnimationFrame(() => {
           if (el) {
@@ -1749,7 +1756,7 @@ export default function PdfEditor({ onBack, tool }) {
       }
     }
     return false;
-  };
+  }, []);
 
   /* Commit text editing */
   const commitText = useCallback((value) => {
@@ -1854,7 +1861,7 @@ export default function PdfEditor({ onBack, tool }) {
     setEditingText(null);
   }, [editingText, updateAnn, deleteAnn, addAnn, strokeColor, textSize, selectedFont]);
 
-  const doClearWorkspace = async () => {
+  const doClearWorkspace = useCallback(async () => {
     await clearPDFFromDB();
     localStorage.removeItem('pdf_editor_annotations');
     localStorage.removeItem('pdf_editor_current_page');
@@ -1869,9 +1876,9 @@ export default function PdfEditor({ onBack, tool }) {
     setThumbnails({});
     setSelectedIdx(null);
     setEditingText(null);
-  };
+  }, []);
 
-  const handleClearWorkspace = () => {
+  const handleClearWorkspace = useCallback(() => {
     setConfirmModal({
       title: 'Open New File',
       message: 'This will remove the current PDF and all annotations. Your changes won\'t be saved unless you export first.',
@@ -1879,7 +1886,7 @@ export default function PdfEditor({ onBack, tool }) {
       danger: true,
       onConfirm: doClearWorkspace,
     });
-  };
+  }, [doClearWorkspace]);
 
   /* Double click to re-edit text */
   const handleDoubleClick = useCallback((e) => {
@@ -2355,6 +2362,7 @@ export default function PdfEditor({ onBack, tool }) {
                   position: 'absolute', top: 0, left: 0,
                   width: pageSize.width, height: pageSize.height,
                   pointerEvents: editingText ? 'none' : 'auto',
+                  visibility: pageReady ? 'visible' : 'hidden',
                 }}
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
