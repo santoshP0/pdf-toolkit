@@ -147,6 +147,9 @@ export function getBounds(ann) {
     }
     return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
   }
+  if (ann.type === 'image') {
+    return { x: ann.x, y: ann.y, w: ann.w, h: ann.h };
+  }
   if (ann.type === 'rect' || ann.type === 'circle') {
     const x = ann.w >= 0 ? ann.x : ann.x + ann.w;
     const y = ann.h >= 0 ? ann.y : ann.y + ann.h;

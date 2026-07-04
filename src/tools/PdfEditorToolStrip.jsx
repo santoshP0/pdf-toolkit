@@ -455,6 +455,7 @@ function PdfEditorToolStrip({
           </div>
         </>
       )}
+
     </div>
   );
 }

@@ -192,7 +192,7 @@ function PdfEditorLayersPanel({
                   </div>
                 </div>
 
-                {/* Color */}
+                {(
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, position: 'relative' }}>
                   <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>
                     {ann.type === 'text' ? 'Text Color' : 'Border/Stroke Color'}
@@ -202,7 +202,7 @@ function PdfEditorLayersPanel({
                     <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)' }}>{ann.color}</span>
                     <input
                       type="color"
-                      value={ann.color.startsWith('#') ? ann.color : '#1a1a1a'}
+                      value={(ann.color || '#1a1a1a').startsWith('#') ? ann.color : '#1a1a1a'}
                       onChange={e => {
                         setStrokeColorSync(e.target.value);
                       }}
@@ -213,6 +213,8 @@ function PdfEditorLayersPanel({
                     />
                   </div>
                 </div>
+                )}
+
 
                 {/* Fill options for shapes */}
                 {['rect', 'circle'].includes(ann.type) && (

@@ -88,7 +88,11 @@ export default function PdfEditor({ onBack, tool }) {
   /* ── Auto-save ── */
   useEffect(() => {
     if (pdfDoc) {
-      localStorage.setItem('pdf_editor_annotations', JSON.stringify(annotations));
+      try {
+        localStorage.setItem('pdf_editor_annotations', JSON.stringify(annotations));
+      } catch (e) {
+        // QuotaExceededError — silently skip save
+      }
       localStorage.setItem('pdf_editor_current_page', currentPage.toString());
       localStorage.setItem('pdf_editor_zoom', zoom.toString());
     }

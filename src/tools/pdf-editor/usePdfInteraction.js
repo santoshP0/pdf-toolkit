@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { getBounds, getHandleAt, hitTest, moveAnn, cloneAnn, uid, SNAP_THRESHOLD } from './helpers';
+import { getBounds, getHandleAt, hitTest, moveAnn, cloneAnn, SNAP_THRESHOLD } from './helpers';
 
 /* ================================================================
    usePdfInteraction hook
