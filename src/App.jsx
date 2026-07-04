@@ -18,6 +18,9 @@ const CropPdf = lazy(() => import('./tools/CropPdf'));
 const NupPdf = lazy(() => import('./tools/NupPdf'));
 const Grayscale = lazy(() => import('./tools/Grayscale'));
 const SignPdf = lazy(() => import('./tools/SignPdf'));
+const ProtectPdf = lazy(() => import('./tools/ProtectPdf'));
+const RedactPdf = lazy(() => import('./tools/RedactPdf'));
+const ExtractImages = lazy(() => import('./tools/ExtractImages'));
 
 const TOOLS = [
   { id: 'merge', title: 'Merge PDF', icon: '📑', cat: 'organize', desc: 'Combine several PDFs into one — drag to reorder.' },
@@ -31,10 +34,13 @@ const TOOLS = [
   { id: 'compress', title: 'Compress PDF', icon: '🗜️', cat: 'optimize', desc: 'Re-encode images to shrink the file size.' },
   { id: 'watermark', title: 'Watermark', icon: '💧', cat: 'security', desc: 'Lay a text watermark over every page.' },
   { id: 'sign', title: 'Sign PDF', icon: '🖊️', cat: 'security', desc: 'Draw, type or upload a signature & place it.' },
+  { id: 'protect', title: 'Protect PDF', icon: '🔒', cat: 'security', desc: 'Add or remove an AES-256 password.' },
+  { id: 'redact', title: 'Redact PDF', icon: '🚫', cat: 'security', desc: 'Permanently black out sensitive areas.' },
   { id: 'editor', title: 'PDF Editor', icon: '✏️', cat: 'edit', desc: 'Draw, annotate & add text on any page.' },
   { id: 'metadata', title: 'Edit Metadata', icon: '🏷️', cat: 'edit', desc: 'Set title, author, keywords & more.' },
   { id: 'crop', title: 'Crop PDF', icon: '📐', cat: 'edit', desc: 'Trim page margins with a live preview.' },
   { id: 'extracttext', title: 'Extract Text', icon: '📝', cat: 'convert', desc: 'Pull selectable text from digital PDFs.' },
+  { id: 'extractimages', title: 'Extract Images', icon: '📸', cat: 'convert', desc: 'Save embedded pictures as PNG files.' },
   { id: 'nup', title: 'Combine Pages', icon: '🔳', cat: 'organize', desc: 'Fit 2–16 pages onto each printed sheet.' },
   { id: 'grayscale', title: 'Grayscale', icon: '🌚', cat: 'optimize', desc: 'Convert pages to grayscale to save ink.' },
 ];
@@ -61,6 +67,9 @@ const TOOL_COMPONENTS = {
   compress: CompressPdf,
   watermark: Watermark,
   sign: SignPdf,
+  protect: ProtectPdf,
+  redact: RedactPdf,
+  extractimages: ExtractImages,
   editor: PdfEditor,
   metadata: Metadata,
   crop: CropPdf,
