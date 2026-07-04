@@ -12,6 +12,12 @@ const RotatePdf = lazy(() => import('./tools/RotatePdf'));
 const CompressPdf = lazy(() => import('./tools/CompressPdf'));
 const Watermark = lazy(() => import('./tools/Watermark'));
 const PdfEditor = lazy(() => import('./tools/PdfEditor'));
+const Metadata = lazy(() => import('./tools/Metadata'));
+const ExtractText = lazy(() => import('./tools/ExtractText'));
+const CropPdf = lazy(() => import('./tools/CropPdf'));
+const NupPdf = lazy(() => import('./tools/NupPdf'));
+const Grayscale = lazy(() => import('./tools/Grayscale'));
+const SignPdf = lazy(() => import('./tools/SignPdf'));
 
 const TOOLS = [
   { id: 'merge', title: 'Merge PDF', icon: '📑', cat: 'organize', desc: 'Combine several PDFs into one — drag to reorder.' },
@@ -24,7 +30,13 @@ const TOOLS = [
   { id: 'rotate', title: 'Rotate PDF', icon: '🔄', cat: 'edit', desc: 'Spin all or chosen pages the right way up.' },
   { id: 'compress', title: 'Compress PDF', icon: '🗜️', cat: 'optimize', desc: 'Re-encode images to shrink the file size.' },
   { id: 'watermark', title: 'Watermark', icon: '💧', cat: 'security', desc: 'Lay a text watermark over every page.' },
+  { id: 'sign', title: 'Sign PDF', icon: '🖊️', cat: 'security', desc: 'Draw, type or upload a signature & place it.' },
   { id: 'editor', title: 'PDF Editor', icon: '✏️', cat: 'edit', desc: 'Draw, annotate & add text on any page.' },
+  { id: 'metadata', title: 'Edit Metadata', icon: '🏷️', cat: 'edit', desc: 'Set title, author, keywords & more.' },
+  { id: 'crop', title: 'Crop PDF', icon: '📐', cat: 'edit', desc: 'Trim page margins with a live preview.' },
+  { id: 'extracttext', title: 'Extract Text', icon: '📝', cat: 'convert', desc: 'Pull selectable text from digital PDFs.' },
+  { id: 'nup', title: 'Combine Pages', icon: '🔳', cat: 'organize', desc: 'Fit 2–16 pages onto each printed sheet.' },
+  { id: 'grayscale', title: 'Grayscale', icon: '🌚', cat: 'optimize', desc: 'Convert pages to grayscale to save ink.' },
 ];
 
 const CATEGORIES = ['all', 'organize', 'convert', 'edit', 'optimize', 'security'];
@@ -48,7 +60,13 @@ const TOOL_COMPONENTS = {
   rotate: RotatePdf,
   compress: CompressPdf,
   watermark: Watermark,
+  sign: SignPdf,
   editor: PdfEditor,
+  metadata: Metadata,
+  crop: CropPdf,
+  extracttext: ExtractText,
+  nup: NupPdf,
+  grayscale: Grayscale,
 };
 
 function formatSize(bytes) {
