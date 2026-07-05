@@ -4,7 +4,7 @@ import usePdfTool from './shared/usePdfTool';
 import { loadPdfjsDoc } from './shared/pdfjs';
 import { Dropzone, FileInfo, ProgressBar, ActionRow } from './shared/PdfToolUI';
 
-export default function ExtractText() {
+export default function ExtractText({ onSwitchToOcr }) {
   const {
     file, setFile, pageCount, setPageCount,
     processing, setProcessing, progress, setProgress,
@@ -81,6 +81,8 @@ export default function ExtractText() {
     }
   }, [file, pageBreaks, setProcessing, setProgress, setPageCount]);
 
+  const noTextFound = !processing && !text && statusMsg && statusMsg.includes('No selectable');
+
   const copyText = useCallback(() => {
     navigator.clipboard.writeText(text).then(() => {
       setStatusMsg('Copied to clipboard!');
@@ -108,7 +110,16 @@ export default function ExtractText() {
           <FileInfo file={file} pageCount={pageCount} onRemove={handleReset} />
 
           <div className="controls">
-            <div className="control-row">
+            <div className="control-row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{
+                fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
+                padding: '3px 8px', borderRadius: 6,
+                background: 'var(--cat-convert-bg)', color: 'var(--cat-convert)',
+                border: '1px solid var(--cat-convert)', opacity: 0.9,
+                flexShrink: 0,
+              }}>
+                ⚡ Digital PDFs only
+              </span>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                 <input type="checkbox" checked={pageBreaks} onChange={e => setPageBreaks(e.target.checked)} />
                 <span className="control-label" style={{ margin: 0 }}>Mark page breaks</span>
@@ -138,7 +149,33 @@ export default function ExtractText() {
             </div>
           )}
 
-          {!processing && statusMsg && !text && (
+          {noTextFound && (
+            <div style={{
+              margin: '0.75rem 0',
+              padding: '12px 16px',
+              borderRadius: 10,
+              background: 'var(--cat-security-bg)',
+              border: '1.5px solid var(--cat-security)',
+              display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+            }}>
+              <span style={{ fontSize: 20 }}>🤖</span>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--cat-security)', marginBottom: 2 }}>
+                  No selectable text found
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.85 }}>
+                  This looks like a scanned or image-based PDF. Use <strong>OCR Text</strong> to recognise text with AI.
+                </div>
+              </div>
+              {onSwitchToOcr && (
+                <button className="btn btn-primary" style={{ fontSize: 12, padding: '6px 14px', flexShrink: 0 }} onClick={onSwitchToOcr}>
+                  Try OCR Text →
+                </button>
+              )}
+            </div>
+          )}
+
+          {!processing && statusMsg && !noTextFound && !text && (
             <div className="progress-text" style={{ marginTop: '0.5rem' }}>{statusMsg}</div>
           )}
         </>

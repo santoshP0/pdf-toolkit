@@ -28,7 +28,7 @@ const TOOLS = [
   { id: 'organize', title: 'Organize Pages', icon: '🗃️', cat: 'organize', desc: 'Reorder, rotate and delete pages visually.' },
   { id: 'img2pdf', title: 'Images → PDF', icon: '🖼️', cat: 'convert', desc: 'Turn JPG & PNG files into one clean PDF.' },
   { id: 'pdf2img', title: 'PDF → Images', icon: '🏞️', cat: 'convert', desc: 'Export every page as a PNG or JPG.' },
-  { id: 'ocr', title: 'OCR Text', icon: '🔍', cat: 'convert', desc: 'Pull selectable text out of scanned pages.' },
+  { id: 'ocr', title: 'OCR Text', icon: '🤖', cat: 'convert', desc: 'AI-powered — reads scanned PDFs & images. Use when the PDF has no selectable text.' },
   { id: 'numbers', title: 'Page Numbers', icon: '#️⃣', cat: 'edit', desc: 'Stamp page numbers — your position & style.' },
   { id: 'rotate', title: 'Rotate PDF', icon: '🔄', cat: 'edit', desc: 'Spin all or chosen pages the right way up.' },
   { id: 'compress', title: 'Compress PDF', icon: '🗜️', cat: 'optimize', desc: 'Re-encode images to shrink the file size.' },
@@ -39,7 +39,7 @@ const TOOLS = [
   { id: 'editor', title: 'PDF Editor', icon: '✏️', cat: 'edit', desc: 'Draw, annotate & add text on any page.' },
   { id: 'metadata', title: 'Edit Metadata', icon: '🏷️', cat: 'edit', desc: 'Set title, author, keywords & more.' },
   { id: 'crop', title: 'Crop PDF', icon: '📐', cat: 'edit', desc: 'Trim page margins with a live preview.' },
-  { id: 'extracttext', title: 'Extract Text', icon: '📝', cat: 'convert', desc: 'Pull selectable text from digital PDFs.' },
+  { id: 'extracttext', title: 'Extract Text', icon: '📄', cat: 'convert', desc: 'Instantly copies the text layer from digital PDFs. Won\'t work on scanned or image-only PDFs.' },
   { id: 'extractimages', title: 'Extract Images', icon: '📸', cat: 'convert', desc: 'Save embedded pictures as PNG files.' },
   { id: 'nup', title: 'Combine Pages', icon: '🔳', cat: 'organize', desc: 'Fit 2–16 pages onto each printed sheet.' },
   { id: 'grayscale', title: 'Grayscale', icon: '🌚', cat: 'optimize', desc: 'Convert pages to grayscale to save ink.' },
@@ -182,6 +182,32 @@ function App() {
         }>
           {openTool === 'editor' ? (
             <ToolComponent onBack={() => setOpenTool(null)} tool={tool} />
+          ) : openTool === 'extracttext' ? (
+            <div className="main-content">
+              <div className="workspace">
+                <div className="ws-header">
+                  <span className="ws-emoji">{tool.icon}</span>
+                  <div className="ws-info">
+                    <h2>{tool.title}</h2>
+                    <p>{tool.desc}</p>
+                  </div>
+                </div>
+                <ToolComponent onBack={() => setOpenTool(null)} onSwitchToOcr={() => setOpenTool('ocr')} />
+              </div>
+            </div>
+          ) : openTool === 'ocr' ? (
+            <div className="main-content">
+              <div className="workspace">
+                <div className="ws-header">
+                  <span className="ws-emoji">{tool.icon}</span>
+                  <div className="ws-info">
+                    <h2>{tool.title}</h2>
+                    <p>{tool.desc}</p>
+                  </div>
+                </div>
+                <ToolComponent onBack={() => setOpenTool(null)} onSwitchToExtract={() => setOpenTool('extracttext')} />
+              </div>
+            </div>
           ) : (
             <div className="main-content">
               <div className="workspace">

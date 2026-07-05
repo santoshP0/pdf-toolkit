@@ -3,7 +3,7 @@ import usePdfTool from './shared/usePdfTool';
 import { loadPdfjsDoc, renderPageToCanvas } from './shared/pdfjs';
 import { Dropzone, FileInfo, ProgressBar, ActionRow } from './shared/PdfToolUI';
 
-export default function OcrText() {
+export default function OcrText({ onSwitchToExtract }) {
   const {
     file, setFile,
     processing, setProcessing,
@@ -140,13 +140,35 @@ export default function OcrText() {
             </div>
           )}
 
+          <div className="controls" style={{ marginBottom: '0.75rem' }}>
+            <div className="control-row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{
+                fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
+                padding: '3px 8px', borderRadius: 6,
+                background: 'var(--cat-security-bg)', color: 'var(--cat-security)',
+                border: '1px solid var(--cat-security)', opacity: 0.9,
+                flexShrink: 0,
+              }}>
+                🤖 AI · Scanned PDFs &amp; Images
+              </span>
+              {onSwitchToExtract && file?.type === 'application/pdf' && (
+                <span style={{ fontSize: 11, opacity: 0.7 }}>
+                  Digital PDF? <button
+                    onClick={onSwitchToExtract}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--cat-convert)', fontWeight: 700, fontSize: 11, textDecoration: 'underline' }}
+                  >Use Extract Text →</button> (faster)
+                </span>
+              )}
+            </div>
+          </div>
+
           {processing && (
             <ProgressBar progress={progress} label={statusMsg} />
           )}
 
           <ActionRow>
             <button className="btn btn-primary" disabled={processing} onClick={runOcr}>
-              {processing ? 'Processing...' : 'Extract Text'}
+              {processing ? 'Recognising...' : 'Run OCR'}
             </button>
             {text && (
               <button className="btn btn-secondary" onClick={copyText}>
