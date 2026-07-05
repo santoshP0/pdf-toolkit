@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import usePdfTool from './shared/usePdfTool';
+import { loadPdfjsDoc, renderPageToCanvas } from './shared/pdfjs';
 import { Dropzone, FileInfo, ProgressBar, ActionRow } from './shared/PdfToolUI';
 
 export default function OcrText() {
@@ -61,20 +62,10 @@ export default function OcrText() {
       let imageSources = [];
 
       if (file.type === 'application/pdf') {
-        const pdfjsMod = await import('pdfjs-dist');
-        if (!pdfjsMod.GlobalWorkerOptions.workerSrc) {
-          pdfjsMod.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsMod.version}/build/pdf.worker.min.mjs`;
-        }
-        const bytes = await file.arrayBuffer();
-        const doc = await pdfjsMod.getDocument({ data: new Uint8Array(bytes) }).promise;
+        const doc = await loadPdfjsDoc(await file.arrayBuffer());
         for (let i = 1; i <= doc.numPages; i++) {
           const page = await doc.getPage(i);
-          const vp = page.getViewport({ scale: 2 });
-          const canvas = document.createElement('canvas');
-          canvas.width = vp.width;
-          canvas.height = vp.height;
-          const ctx = canvas.getContext('2d');
-          await page.render({ canvasContext: ctx, viewport: vp }).promise;
+          const { canvas } = await renderPageToCanvas(page, 2);
           imageSources.push(canvas.toDataURL('image/png'));
         }
       } else {

@@ -1,17 +1,8 @@
 import { useState, useCallback } from 'react';
 import { PDFDocument, degrees } from 'pdf-lib';
 import usePdfTool from './shared/usePdfTool';
+import { loadPdfjsDoc } from './shared/pdfjs';
 import { Dropzone, FileInfo, ActionRow } from './shared/PdfToolUI';
-
-function getPdfjsLib() {
-  return import('pdfjs-dist').then(mod => {
-    const pdfjsLib = mod;
-    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-    }
-    return pdfjsLib;
-  });
-}
 
 export default function RotatePdf() {
   const {
@@ -31,9 +22,7 @@ export default function RotatePdf() {
     setFile(f);
     setLoading(true);
     try {
-      const pdfjsLib = await getPdfjsLib();
-      const bytes = await f.arrayBuffer();
-      const doc = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+      const doc = await loadPdfjsDoc(await f.arrayBuffer());
       const pageData = [];
       for (let i = 1; i <= doc.numPages; i++) {
         const page = await doc.getPage(i);
