@@ -1,4 +1,10 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import {
+  FilePlus2, Scissors, LayoutGrid, Images, ImageDown,
+  ScanText, Hash, RotateCw, PackageOpen, Droplets,
+  PenLine, Lock, EyeOff, PenSquare, Tag,
+  Crop, FileText, Camera, LayoutTemplate, Contrast,
+} from 'lucide-react';
 import './App.css';
 
 const MergePdf = lazy(() => import('./tools/MergePdf'));
@@ -23,26 +29,26 @@ const RedactPdf = lazy(() => import('./tools/RedactPdf'));
 const ExtractImages = lazy(() => import('./tools/ExtractImages'));
 
 const TOOLS = [
-  { id: 'merge', title: 'Merge PDF', icon: '📑', cat: 'organize', desc: 'Combine several PDFs into one — drag to reorder.' },
-  { id: 'split', title: 'Split PDF', icon: '✂️', cat: 'organize', desc: 'Pull out page ranges or single pages.' },
-  { id: 'organize', title: 'Organize Pages', icon: '🗃️', cat: 'organize', desc: 'Reorder, rotate and delete pages visually.' },
-  { id: 'img2pdf', title: 'Images → PDF', icon: '🖼️', cat: 'convert', desc: 'Turn JPG & PNG files into one clean PDF.' },
-  { id: 'pdf2img', title: 'PDF → Images', icon: '🏞️', cat: 'convert', desc: 'Export every page as a PNG or JPG.' },
-  { id: 'ocr', title: 'OCR Text', icon: '🤖', cat: 'convert', desc: 'AI-powered — reads scanned PDFs & images. Use when the PDF has no selectable text.' },
-  { id: 'numbers', title: 'Page Numbers', icon: '#️⃣', cat: 'edit', desc: 'Stamp page numbers — your position & style.' },
-  { id: 'rotate', title: 'Rotate PDF', icon: '🔄', cat: 'edit', desc: 'Spin all or chosen pages the right way up.' },
-  { id: 'compress', title: 'Compress PDF', icon: '🗜️', cat: 'optimize', desc: 'Re-encode images to shrink the file size.' },
-  { id: 'watermark', title: 'Watermark', icon: '💧', cat: 'security', desc: 'Lay a text watermark over every page.' },
-  { id: 'sign', title: 'Sign PDF', icon: '🖊️', cat: 'security', desc: 'Draw, type or upload a signature & place it.' },
-  { id: 'protect', title: 'Protect PDF', icon: '🔒', cat: 'security', desc: 'Add or remove an AES-256 password.' },
-  { id: 'redact', title: 'Redact PDF', icon: '🚫', cat: 'security', desc: 'Permanently black out sensitive areas.' },
-  { id: 'editor', title: 'PDF Editor', icon: '✏️', cat: 'edit', desc: 'Draw, annotate & add text on any page.' },
-  { id: 'metadata', title: 'Edit Metadata', icon: '🏷️', cat: 'edit', desc: 'Set title, author, keywords & more.' },
-  { id: 'crop', title: 'Crop PDF', icon: '📐', cat: 'edit', desc: 'Trim page margins with a live preview.' },
-  { id: 'extracttext', title: 'Extract Text', icon: '📄', cat: 'convert', desc: 'Instantly copies the text layer from digital PDFs. Won\'t work on scanned or image-only PDFs.' },
-  { id: 'extractimages', title: 'Extract Images', icon: '📸', cat: 'convert', desc: 'Save embedded pictures as PNG files.' },
-  { id: 'nup', title: 'Combine Pages', icon: '🔳', cat: 'organize', desc: 'Fit 2–16 pages onto each printed sheet.' },
-  { id: 'grayscale', title: 'Grayscale', icon: '🌚', cat: 'optimize', desc: 'Convert pages to grayscale to save ink.' },
+  { id: 'merge',        title: 'Merge PDF',       Icon: FilePlus2,      cat: 'organize', desc: 'Combine several PDFs into one — drag to reorder.' },
+  { id: 'split',        title: 'Split PDF',        Icon: Scissors,       cat: 'organize', desc: 'Pull out page ranges or single pages.' },
+  { id: 'organize',     title: 'Organize Pages',   Icon: LayoutGrid,     cat: 'organize', desc: 'Reorder, rotate and delete pages visually.' },
+  { id: 'img2pdf',      title: 'Images → PDF',     Icon: Images,         cat: 'convert',  desc: 'Turn JPG & PNG files into one clean PDF.' },
+  { id: 'pdf2img',      title: 'PDF → Images',     Icon: ImageDown,      cat: 'convert',  desc: 'Export every page as a PNG or JPG.' },
+  { id: 'ocr',          title: 'OCR Text',          Icon: ScanText,       cat: 'convert',  desc: 'AI-powered — reads scanned PDFs & images. Use when the PDF has no selectable text.' },
+  { id: 'numbers',      title: 'Page Numbers',      Icon: Hash,           cat: 'edit',     desc: 'Stamp page numbers — your position & style.' },
+  { id: 'rotate',       title: 'Rotate PDF',        Icon: RotateCw,       cat: 'edit',     desc: 'Spin all or chosen pages the right way up.' },
+  { id: 'compress',     title: 'Compress PDF',      Icon: PackageOpen,    cat: 'optimize', desc: 'Re-encode images to shrink the file size.' },
+  { id: 'watermark',    title: 'Watermark',         Icon: Droplets,       cat: 'security', desc: 'Lay a text watermark over every page.' },
+  { id: 'sign',         title: 'Sign PDF',          Icon: PenLine,        cat: 'security', desc: 'Draw, type or upload a signature & place it.' },
+  { id: 'protect',      title: 'Protect PDF',       Icon: Lock,           cat: 'security', desc: 'Add or remove an AES-256 password.' },
+  { id: 'redact',       title: 'Redact PDF',        Icon: EyeOff,         cat: 'security', desc: 'Permanently black out sensitive areas.' },
+  { id: 'editor',       title: 'PDF Editor',        Icon: PenSquare,      cat: 'edit',     desc: 'Draw, annotate & add text on any page.' },
+  { id: 'metadata',     title: 'Edit Metadata',     Icon: Tag,            cat: 'edit',     desc: 'Set title, author, keywords & more.' },
+  { id: 'crop',         title: 'Crop PDF',          Icon: Crop,           cat: 'edit',     desc: 'Trim page margins with a live preview.' },
+  { id: 'extracttext',  title: 'Extract Text',      Icon: FileText,       cat: 'convert',  desc: "Instantly copies the text layer from digital PDFs. Won't work on scanned or image-only PDFs." },
+  { id: 'extractimages',title: 'Extract Images',    Icon: Camera,         cat: 'convert',  desc: 'Save embedded pictures as PNG files.' },
+  { id: 'nup',          title: 'Combine Pages',     Icon: LayoutTemplate, cat: 'organize', desc: 'Fit 2–16 pages onto each printed sheet.' },
+  { id: 'grayscale',    title: 'Grayscale',         Icon: Contrast,       cat: 'optimize', desc: 'Convert pages to grayscale to save ink.' },
 ];
 
 const CATEGORIES = ['all', 'organize', 'convert', 'edit', 'optimize', 'security'];
@@ -135,6 +141,7 @@ function App() {
   if (openTool) {
     const tool = TOOLS.find(t => t.id === openTool);
     const ToolComponent = TOOL_COMPONENTS[openTool];
+    const catStyle = CAT_CARD_STYLES[tool?.cat] || CAT_CARD_STYLES.organize;
     return (
       <>
         <header className="header">
@@ -186,7 +193,9 @@ function App() {
             <div className="main-content">
               <div className="workspace">
                 <div className="ws-header">
-                  <span className="ws-emoji">{tool.icon}</span>
+                  <div className="ws-emoji" style={{ color: catStyle?.text || 'var(--cat-convert)', display: 'flex', alignItems: 'center' }}>
+                    <tool.Icon size={36} strokeWidth={1.8} />
+                  </div>
                   <div className="ws-info">
                     <h2>{tool.title}</h2>
                     <p>{tool.desc}</p>
@@ -199,7 +208,9 @@ function App() {
             <div className="main-content">
               <div className="workspace">
                 <div className="ws-header">
-                  <span className="ws-emoji">{tool.icon}</span>
+                  <div className="ws-emoji" style={{ color: catStyle?.text || 'var(--cat-convert)', display: 'flex', alignItems: 'center' }}>
+                    <tool.Icon size={36} strokeWidth={1.8} />
+                  </div>
                   <div className="ws-info">
                     <h2>{tool.title}</h2>
                     <p>{tool.desc}</p>
@@ -212,7 +223,9 @@ function App() {
             <div className="main-content">
               <div className="workspace">
                 <div className="ws-header">
-                  <span className="ws-emoji">{tool.icon}</span>
+                  <div className="ws-emoji" style={{ color: catStyle?.text || 'var(--cat-convert)', display: 'flex', alignItems: 'center' }}>
+                    <tool.Icon size={36} strokeWidth={1.8} />
+                  </div>
                   <div className="ws-info">
                     <h2>{tool.title}</h2>
                     <p>{tool.desc}</p>
@@ -313,7 +326,9 @@ function App() {
                   onClick={() => setOpenTool(tool.id)}
                 >
                   <div className="card-top">
-                    <span className="card-emoji" style={{ color: catStyle.text }}>{tool.icon}</span>
+                    <span className="card-emoji" style={{ color: catStyle.text, display: 'flex', alignItems: 'center' }}>
+                      <tool.Icon size={22} strokeWidth={2} />
+                    </span>
                     <div className="card-meta">
                       <span className="card-number" style={{ color: catStyle.text }}>#{String(idx + 1).padStart(2, '0')}</span>
                       <button
