@@ -17,11 +17,20 @@ export function getPdfjsLib() {
   return pdfjsPromise;
 }
 
-/** Load a PDF File/ArrayBuffer into a pdf.js document. */
+/** Load a PDF File/ArrayBuffer/Uint8Array into a pdf.js document. */
 export async function loadPdfjsDoc(source) {
   const pdfjsLib = await getPdfjsLib();
-  const data = source instanceof ArrayBuffer ? source : await source.arrayBuffer();
-  return pdfjsLib.getDocument({ data: new Uint8Array(data) }).promise;
+  let data;
+  if (source instanceof Uint8Array) {
+    // Already the right type — pass through directly.
+    data = source;
+  } else if (source instanceof ArrayBuffer) {
+    data = new Uint8Array(source);
+  } else {
+    // File or Blob — read as ArrayBuffer first.
+    data = new Uint8Array(await source.arrayBuffer());
+  }
+  return pdfjsLib.getDocument({ data }).promise;
 }
 
 /** Render one page to a fresh canvas at the given scale (white background). */
