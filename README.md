@@ -1,4 +1,4 @@
-# 🗂️ PDF Toolbox
+# 🗂️ PDF Toolkit
 
 > A fully local, privacy-first PDF toolkit — 20 tools, zero file uploads, runs entirely in your browser.
 
