@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { ChevronUp, ChevronDown, X } from 'lucide-react';
 
 import S from './pdf-editor/PdfEditorStyles';
 import {
@@ -30,6 +31,14 @@ export default function PdfEditor({ onBack, tool }) {
   const [confirmModal, setConfirmModal] = useState(null);
   const [clipboard, setClipboard] = useState(null);
   const [dragOverLayerIdx, setDragOverLayerIdx] = useState(null);
+
+  /* ── Search state ── */
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchMatches, setSearchMatches] = useState([]); // [{page,x,y,width,height}] page-pixel coords
+  const [activeMatchIdx, setActiveMatchIdx] = useState(-1);
+  const searchInputRef = useRef();
+  const searchIndexRef = useRef(null); // { doc, items } cache across all pages
 
   /* ── Refs shared between hooks ── */
   const inputRef = useRef();
@@ -124,6 +133,20 @@ export default function PdfEditor({ onBack, tool }) {
     setAnnsH(prev => ({ ...prev, [currentPage]: [...(prev[currentPage] || []), dup] }));
     setSelectedIdx(pageAnns.length);
   }, [currentPage, pageAnns, setAnnsH, setSelectedIdx]);
+
+  const copyAnn = useCallback((idx, cut = false) => {
+    const ann = pageAnns[idx];
+    if (!ann) return;
+    setClipboard({ ann: cloneAnn(ann), cut });
+    if (cut) deleteAnn(idx);
+  }, [pageAnns, deleteAnn]);
+
+  const pasteAnn = useCallback(() => {
+    if (!clipboard) return;
+    const pasted = moveAnn(cloneAnn(clipboard.ann), 15, 15);
+    setAnnsH(prev => ({ ...prev, [currentPage]: [...(prev[currentPage] || []), pasted] }));
+    setSelectedIdx(pageAnns.length);
+  }, [clipboard, currentPage, pageAnns.length, setAnnsH, setSelectedIdx]);
 
   const bringForward = useCallback((idx) => {
     if (idx >= pageAnns.length - 1) return;
@@ -287,15 +310,30 @@ export default function PdfEditor({ onBack, tool }) {
       }
       return {x:pi.x-4,y:pi.y-pi.height-4,w:pi.width+8,h:pi.height+10,bgColor};
     };
+    // Padded box around the note text — measured once, only on commit.
+    const computeNoteBg = (x, y, text, fontSize) => {
+      const lines = (text||'').split('\n');
+      let maxW = 0;
+      const ctx = canvasRef.current?.getContext('2d');
+      if (ctx) {
+        ctx.font = `${fontSize}px ${resolvedFont}`;
+        for (const l of lines) { const w = ctx.measureText(l.replace(/<\/?[bi]>/g,'')).width; if (w>maxW) maxW=w; }
+      } else {
+        maxW = Math.max(...lines.map(l=>l.replace(/<\/?[bi]>/g,'').length),1) * fontSize * 0.55;
+      }
+      return { x:x-6, y:y-fontSize-6, w:maxW+12, h:lines.length*fontSize*1.25+12 };
+    };
     if (editingText.editIdx != null) {
       if (value.trim()) {
-        updateAnn(editingText.editIdx, {
+        const updates = {
           text: value, fontFamily: resolvedFont,
           fontSize: editingText.matchedFontSize||textSize,
           fontWeight: editingText.matchedBold?700:(editingText.matchedWeight||400),
           fontStyle: editingText.matchedItalic?'italic':'normal',
           color: editingText.matchedColor||strokeColor,
-        });
+        };
+        if (editingText.note) updates.noteBg = computeNoteBg(editingText.x, editingText.y, value, updates.fontSize);
+        updateAnn(editingText.editIdx, updates);
       } else { deleteAnn(editingText.editIdx); }
     } else if (editingText.pdfTextItem && !value.trim()) {
       if (value !== editingText.originalValue) {
@@ -312,6 +350,7 @@ export default function PdfEditor({ onBack, tool }) {
         fontWeight:editingText.matchedBold?700:(editingText.matchedWeight||400),
         fontStyle:editingText.matchedItalic?'italic':'normal',fontFamily:resolvedFont};
       if (editingText.pdfTextItem) annData.whiteout=buildWhiteout(editingText.pdfTextItem);
+      if (editingText.note) { annData.note=true; annData.noteColor='#fff9c4'; annData.noteBg=computeNoteBg(editingText.x,editingText.y,value,annData.fontSize); }
       addAnn(annData);
     }
     setEditingText(null);
@@ -359,7 +398,67 @@ export default function PdfEditor({ onBack, tool }) {
     setActiveTool, setSelectedIdx, setEditingText, setContextMenu,
     setZoom, setCurrentPage, setShowThumbs,
     setSpaceHeld, setIsPanning,
+    copyAnn, pasteAnn, clipboard,
+    setSearchOpen, searchInputRef,
   });
+
+  /* ── Search: build cross-page text index (lazy, cached per doc) & find ── */
+  const runSearch = useCallback(async (q) => {
+    if (!pdfDoc) return;
+    let idx = searchIndexRef.current;
+    if (!idx || idx.doc !== pdfDoc) {
+      const items = [];
+      for (let p = 1; p <= pdfDoc.numPages; p++) {
+        const page = await pdfDoc.getPage(p);
+        const vp = page.getViewport({ scale: renderScale });
+        const tc = await page.getTextContent();
+        for (const it of tc.items) {
+          if (!it.str || !it.str.trim()) continue;
+          const tx = it.transform;
+          items.push({ page: p, str: it.str,
+            x: tx[4] * renderScale, y: vp.height - tx[5] * renderScale,
+            width: it.width * renderScale, height: it.height * renderScale });
+        }
+      }
+      idx = { doc: pdfDoc, items };
+      searchIndexRef.current = idx;
+    }
+    const ql = q.toLowerCase();
+    const matches = idx.items.filter(it => it.str.toLowerCase().includes(ql));
+    setSearchMatches(matches);
+    setActiveMatchIdx(matches.length ? 0 : -1);
+  }, [pdfDoc, renderScale]);
+
+  /* debounce query -> search */
+  useEffect(() => {
+    if (!searchOpen) return;
+    const q = searchQuery.trim();
+    const t = setTimeout(() => {
+      if (!q) { setSearchMatches([]); setActiveMatchIdx(-1); }
+      else runSearch(q);
+    }, q ? 250 : 0);
+    return () => clearTimeout(t);
+  }, [searchQuery, searchOpen, runSearch]);
+
+  /* navigate to active match: switch page if needed, then scroll into view (zoom-aware) */
+  useEffect(() => {
+    const m = searchMatches[activeMatchIdx];
+    if (!m) return;
+    if (m.page !== currentPage) { setCurrentPage(m.page); setSelectedIdx(null); return; }
+    if (!pageReady) return;
+    const sc = scrollRef.current;
+    if (!sc || !pageSize.width) return;
+    // scroller content = 32px padding + canvasContainer scaled by zoom (origin top-center)
+    const cy = 32 + (m.y - m.height / 2) * zoom;
+    const cx = sc.scrollWidth / 2 + (m.x + m.width / 2 - pageSize.width / 2) * zoom;
+    sc.scrollTo({ top: cy - sc.clientHeight / 2, left: cx - sc.clientWidth / 2, behavior: 'smooth' });
+  }, [activeMatchIdx, searchMatches, currentPage, pageReady, zoom, pageSize.width, setCurrentPage, setSelectedIdx]);
+
+  const gotoNext = useCallback(() => { setActiveMatchIdx(i => searchMatches.length ? (i + 1) % searchMatches.length : -1); }, [searchMatches.length]);
+  const gotoPrev = useCallback(() => { setActiveMatchIdx(i => searchMatches.length ? (i - 1 + searchMatches.length) % searchMatches.length : -1); }, [searchMatches.length]);
+  const closeSearch = useCallback(() => { setSearchOpen(false); setSearchQuery(''); setSearchMatches([]); setActiveMatchIdx(-1); }, []);
+
+  useEffect(() => { if (searchOpen) requestAnimationFrame(() => searchInputRef.current?.focus()); }, [searchOpen]);
 
   /* ── drawOverlay ── */
   const drawOverlay = useCallback(() => {
@@ -369,6 +468,16 @@ export default function PdfEditor({ onBack, tool }) {
     canvas.height = pageSize.height;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const drawNoteBox = (ann) => {
+      const nb=ann.noteBg; ctx.save();
+      ctx.fillStyle=ann.noteColor||'#fff9c4'; ctx.strokeStyle='#e0c94a'; ctx.lineWidth=1;
+      if(ctx.roundRect){ctx.beginPath();ctx.roundRect(nb.x,nb.y,nb.w,nb.h,4);ctx.fill();ctx.stroke();}
+      else{ctx.fillRect(nb.x,nb.y,nb.w,nb.h);ctx.strokeRect(nb.x,nb.y,nb.w,nb.h);}
+      const fc=8; ctx.fillStyle='#e0c94a'; ctx.beginPath();
+      ctx.moveTo(nb.x+nb.w-fc,nb.y+nb.h); ctx.lineTo(nb.x+nb.w,nb.y+nb.h-fc); ctx.lineTo(nb.x+nb.w,nb.y+nb.h); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    };
 
     const drawAnn = (ann) => {
       ctx.save();
@@ -412,6 +521,7 @@ export default function PdfEditor({ onBack, tool }) {
         ctx.stroke();
       } else if (ann.type==='text') {
         if(ann.whiteout){ctx.save();ctx.fillStyle=ann.whiteout.bgColor||'#ffffff';ctx.fillRect(ann.whiteout.x,ann.whiteout.y,ann.whiteout.w,ann.whiteout.h);ctx.restore();}
+        if(ann.note&&ann.noteBg) drawNoteBox(ann);
         const ff=ann.fontFamily||'"Times New Roman", serif';
         ctx.fillStyle=ann.color;
         const lines=(ann.text||'').split('\n'),lh=ann.fontSize*1.25;
@@ -430,6 +540,7 @@ export default function PdfEditor({ onBack, tool }) {
     pageAnns.forEach((ann,idx)=>{
       if(editingText?.editIdx===idx){
         if(ann.whiteout){ctx.save();ctx.fillStyle=ann.whiteout.bgColor||'#ffffff';ctx.fillRect(ann.whiteout.x,ann.whiteout.y,ann.whiteout.w,ann.whiteout.h);ctx.restore();}
+        if(ann.note&&ann.noteBg) drawNoteBox(ann);
         return;
       }
       drawAnn(ann);
@@ -495,8 +606,22 @@ export default function PdfEditor({ onBack, tool }) {
       }
       ctx.restore();
     }
+
+    /* Search highlights (visual only — never mutate annotations) */
+    if(searchMatches.length){
+      ctx.save();
+      searchMatches.forEach((m,i)=>{
+        if(m.page!==currentPage) return;
+        const bx=m.x-1,by=m.y-m.height-1,bw=m.width+2,bh=m.height+4;
+        ctx.fillStyle=i===activeMatchIdx?'rgba(255,170,0,0.5)':'rgba(255,213,0,0.35)';
+        ctx.fillRect(bx,by,bw,bh);
+        if(i===activeMatchIdx){ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;ctx.strokeRect(bx,by,bw,bh);}
+      });
+      ctx.restore();
+    }
   }, [pageAnns,pageSize,pageReady,isDrawing,currentPath,shapePreview,strokeColor,
-      strokeWidth,selectedIdx,activeTool,editingText,guides,pdfTextItems,hoveredTextItem,fillColor]);
+      strokeWidth,selectedIdx,activeTool,editingText,guides,pdfTextItems,hoveredTextItem,fillColor,
+      searchMatches,activeMatchIdx,currentPage]);
 
   useEffect(()=>{
     if(rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -508,7 +633,7 @@ export default function PdfEditor({ onBack, tool }) {
   const cursor = useMemo(()=>{
     if(spaceHeld||isPanning) return 'grab';
     if(activeTool==='text'&&hoveredTextItem) return 'text';
-    return {select:'default',text:'text',eraser:'crosshair',draw:'crosshair',highlight:'crosshair',rect:'crosshair',circle:'crosshair',line:'crosshair',arrow:'crosshair'}[activeTool]||'crosshair';
+    return {select:'default',text:'text',note:'text',eraser:'crosshair',draw:'crosshair',highlight:'crosshair',rect:'crosshair',circle:'crosshair',line:'crosshair',arrow:'crosshair'}[activeTool]||'crosshair';
   },[activeTool,spaceHeld,isPanning,hoveredTextItem]);
 
   const handleDrop = (e)=>{e.preventDefault();setDragOver(false);loadFile(e.dataTransfer.files[0]);};
@@ -518,7 +643,7 @@ export default function PdfEditor({ onBack, tool }) {
     return (
       <div className="main-content">
         <div className="workspace">
-          {tool && (<div className="ws-header"><span className="ws-emoji">{tool.icon}</span><div className="ws-info"><h2>{tool.title}</h2><p>{tool.desc}</p></div></div>)}
+          {tool && (<div className="ws-header"><span className="ws-emoji" style={{display:'flex',alignItems:'center'}}>{tool.Icon && <tool.Icon size={36} strokeWidth={1.8} />}</span><div className="ws-info"><h2>{tool.title}</h2><p>{tool.desc}</p></div></div>)}
           <div className={`dropzone${dragOver?' dragover':''}`} onClick={()=>inputRef.current?.click()} onDragOver={e=>{e.preventDefault();setDragOver(true);}} onDragLeave={()=>setDragOver(false)} onDrop={handleDrop}>
             <div className="dropzone-icon">{'✏️'}</div>
             <div className="dropzone-text"><strong>Drop a PDF here</strong> or click to browse</div>
@@ -531,7 +656,7 @@ export default function PdfEditor({ onBack, tool }) {
   if (loading) {
     return (
       <div className="main-content"><div className="workspace">
-        {tool&&(<div className="ws-header"><span className="ws-emoji">{tool.icon}</span><div className="ws-info"><h2>{tool.title}</h2><p>{tool.desc}</p></div></div>)}
+        {tool&&(<div className="ws-header"><span className="ws-emoji" style={{display:'flex',alignItems:'center'}}>{tool.Icon && <tool.Icon size={36} strokeWidth={1.8} />}</span><div className="ws-info"><h2>{tool.title}</h2><p>{tool.desc}</p></div></div>)}
         <div className="progress-text" style={{textAlign:'center',padding:'3rem 0'}}>Loading PDF...</div>
       </div></div>
     );
@@ -575,6 +700,23 @@ export default function PdfEditor({ onBack, tool }) {
 
         {/* Canvas area */}
         <div style={{...S.canvasArea,cursor}} onWheel={handleWheel}>
+          {searchOpen && (
+            <div style={S.searchBar}>
+              <input ref={searchInputRef} value={searchQuery} placeholder="Find in document"
+                onChange={e=>setSearchQuery(e.target.value)}
+                onKeyDown={e=>{
+                  if(e.key==='Enter'){e.preventDefault();e.shiftKey?gotoPrev():gotoNext();}
+                  else if(e.key==='Escape'){e.preventDefault();closeSearch();}
+                }}
+                style={S.searchInput} />
+              <span style={S.searchCount}>
+                {searchQuery.trim()?(searchMatches.length?`${activeMatchIdx+1} / ${searchMatches.length}`:'No results'):''}
+              </span>
+              <button style={S.searchBtn} onClick={gotoPrev} title="Previous (Shift+Enter)"><ChevronUp size={14}/></button>
+              <button style={S.searchBtn} onClick={gotoNext} title="Next (Enter)"><ChevronDown size={14}/></button>
+              <button style={S.searchBtn} onClick={closeSearch} title="Close (Esc)"><X size={14}/></button>
+            </div>
+          )}
           <div ref={scrollRef} style={S.canvasScroller}>
             <div style={S.canvasContainer(zoom)}>
               <canvas ref={canvasRef} style={S.pageShadow} />

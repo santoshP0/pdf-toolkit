@@ -64,6 +64,10 @@ export default function usePdfExport({ pdfBytesRef, pdfBytes, file, annotations,
               }
               page.drawRectangle({ x: wo.x * sx, y: height - (wo.y + wo.h) * sy, width: wo.w * sx, height: wo.h * sy, color: woColor, borderWidth: 0 });
             }
+            if (ann.note && ann.noteBg) {
+              const nb = ann.noteBg;
+              page.drawRectangle({ x: nb.x * sx, y: height - (nb.y + nb.h) * sy, width: nb.w * sx, height: nb.h * sy, color: hexToRgb(ann.noteColor || '#fff9c4'), borderWidth: 0 });
+            }
             const ff = ann.fontFamily || '';
             const isSerif = /times|georgia|garamond|palatino|serif/i.test(ff) && !/sans/i.test(ff);
             const isMono = /courier|mono/i.test(ff);

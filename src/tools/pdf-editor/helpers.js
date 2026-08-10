@@ -236,6 +236,9 @@ export function moveAnn(ann, dx, dy) {
     if (m.whiteout) {
       m.whiteout = { ...m.whiteout, x: m.whiteout.x + dx, y: m.whiteout.y + dy };
     }
+    if (m.noteBg) {
+      m.noteBg = { ...m.noteBg, x: m.noteBg.x + dx, y: m.noteBg.y + dy };
+    }
   }
   return m;
 }
@@ -244,5 +247,6 @@ export function cloneAnn(ann) {
   const c = { ...ann, id: uid() };
   if (c.points) c.points = c.points.map(p => ({ ...p }));
   if (c.whiteout) c.whiteout = { ...c.whiteout };
+  if (c.noteBg) c.noteBg = { ...c.noteBg };
   return c;
 }

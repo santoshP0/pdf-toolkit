@@ -21,14 +21,14 @@ export function getPdfjsLib() {
 export async function loadPdfjsDoc(source) {
   const pdfjsLib = await getPdfjsLib();
   let data;
-  if (source instanceof Uint8Array) {
-    // Already the right type — pass through directly.
-    data = source;
+  if (source && typeof source.arrayBuffer === 'function') {
+    // File or Blob — read as ArrayBuffer first.
+    data = new Uint8Array(await source.arrayBuffer());
   } else if (source instanceof ArrayBuffer) {
     data = new Uint8Array(source);
   } else {
-    // File or Blob — read as ArrayBuffer first.
-    data = new Uint8Array(await source.arrayBuffer());
+    // Already bytes (Uint8Array / typed array) — pass through directly.
+    data = source;
   }
   return pdfjsLib.getDocument({ data }).promise;
 }

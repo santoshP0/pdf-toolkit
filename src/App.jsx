@@ -90,7 +90,36 @@ function formatSize(bytes) {
   return (bytes / 1048576).toFixed(1) + ' MB';
 }
 
+function Splash({ onDone }) {
+  const reduce = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  useEffect(() => {
+    const t = setTimeout(onDone, reduce ? 500 : 2300);
+    return () => clearTimeout(t);
+  }, [onDone, reduce]);
+  return (
+    <div className={`splash${reduce ? ' splash-reduced' : ''}`} role="status" aria-label="Quill">
+      <div className="splash-stage">
+        <span className="splash-word">Quill</span>
+        <svg className="splash-underline" viewBox="0 0 240 34" fill="none" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M6 20 C 62 8, 118 28, 176 14 S 232 18, 236 15" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <span className="splash-drop" aria-hidden="true" />
+        <svg className="splash-quill" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M17 47 L45 18" stroke="#fde047" stroke-width="11" stroke-linecap="round" opacity="0.9"/>
+          <path d="M48 12 C 57 24, 49 41, 23 47 C 30 33, 33 21, 48 12 Z" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"/>
+          <path d="M48 12 Q 33 29 18 52" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+          <g stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <path d="M43 18 L49 17"/><path d="M38 25 L45 25"/><path d="M33 32 L41 33"/><path d="M28 39 L36 41"/>
+          </g>
+          <path d="M23 47 L18 52 L26 49 Z" fill="currentColor"/>
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 function App() {
+  const [showSplash, setShowSplash] = useState(true);
   const [search, setSearch] = useState('');
   const [activeCat, setActiveCat] = useState('all');
   const [dark, setDark] = useState(() => {
@@ -144,9 +173,18 @@ function App() {
     const catStyle = CAT_CARD_STYLES[tool?.cat] || CAT_CARD_STYLES.organize;
     return (
       <>
+        {showSplash && <Splash onDone={() => setShowSplash(false)} />}
         <header className="header">
           <div className="header-left">
-            <span className="logo-badge">PDF</span>
+            <svg className="logo-mark" width="26" height="26" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+              <path d="M17 47 L45 18" stroke="#fde047" strokeWidth="11" strokeLinecap="round" opacity="0.9"/>
+              <path d="M48 12 C 57 24, 49 41, 23 47 C 30 33, 33 21, 48 12 Z" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinejoin="round"/>
+              <path d="M48 12 Q 33 29 18 52" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"/>
+              <g stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                <path d="M43 18 L49 17"/><path d="M38 25 L45 25"/><path d="M33 32 L41 33"/><path d="M28 39 L36 41"/>
+              </g>
+              <path d="M23 47 L18 52 L26 49 Z" fill="currentColor"/>
+            </svg>
             <button className="ws-back" onClick={() => setOpenTool(null)}>
               ← all tools
             </button>
@@ -245,10 +283,19 @@ function App() {
 
   return (
     <>
+      {showSplash && <Splash onDone={() => setShowSplash(false)} />}
       <header className="header">
         <div className="header-left">
-          <span className="logo-badge">PDF</span>
-          <span className="logo-text">pdftoolbox</span>
+          <svg className="logo-mark" width="30" height="30" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+            <path d="M17 47 L45 18" stroke="#fde047" strokeWidth="11" strokeLinecap="round" opacity="0.9"/>
+            <path d="M48 12 C 57 24, 49 41, 23 47 C 30 33, 33 21, 48 12 Z" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinejoin="round"/>
+            <path d="M48 12 Q 33 29 18 52" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"/>
+            <g stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M43 18 L49 17"/><path d="M38 25 L45 25"/><path d="M33 32 L41 33"/><path d="M28 39 L36 41"/>
+            </g>
+            <path d="M23 47 L18 52 L26 49 Z" fill="currentColor"/>
+          </svg>
+          <span className="logo-text">Quill</span>
         </div>
         <div className="header-right">
           <span className="privacy-dot" />

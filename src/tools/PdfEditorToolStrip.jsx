@@ -13,6 +13,7 @@ const ToolIcon = ({ id, size = 14, stroke = 'currentColor', sw = 1.8 }) => {
     case 'line': return <svg {...p}><line x1="5" y1="19" x2="19" y2="5"/></svg>;
     case 'arrow': return <svg {...p}><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg>;
     case 'eraser': return <svg {...p}><path d="M20 20H7L3 16a1 1 0 010-1.4l9.6-9.6a2 2 0 012.8 0l5.2 5.2a2 2 0 010 2.8L15 18.6"/></svg>;
+    case 'note': return <svg {...p}><path d="M4 4h16v11l-5 5H4z"/><path d="M20 15h-5v5"/></svg>;
     default: return null;
   }
 };
@@ -27,6 +28,7 @@ const TOOL_DEFS = [
   { id: 'line',      label: 'Line',      shortcut: 'L', group: 2 },
   { id: 'arrow',     label: 'Arrow',     shortcut: 'A', group: 2 },
   { id: 'eraser',    label: 'Eraser',    shortcut: 'X', group: 3 },
+  { id: 'note',      label: 'Note',      shortcut: 'N', group: 3 },
 ];
 
 export { TOOL_DEFS };

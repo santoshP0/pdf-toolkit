@@ -24,9 +24,23 @@ export default function usePdfKeyboard({
   setShowThumbs,
   setSpaceHeld,
   setIsPanning,
+  copyAnn,
+  pasteAnn,
+  clipboard,
+  setSearchOpen,
+  searchInputRef,
 }) {
   useEffect(() => {
     const onKey = (e) => {
+      const ctrlK = e.ctrlKey || e.metaKey;
+      // Ctrl/Cmd+F: open search — handled before the input guard so it also
+      // overrides the browser find dialog while typing.
+      if (ctrlK && e.key.toLowerCase() === 'f') {
+        e.preventDefault(); setSearchOpen(true);
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+        return;
+      }
+
       const tag = document.activeElement?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
 
@@ -37,7 +51,7 @@ export default function usePdfKeyboard({
         e.preventDefault(); setSpaceHeld(true); return;
       }
 
-      const tm = { v: 'select', t: 'text', p: 'draw', h: 'highlight', r: 'rect', e: 'circle', l: 'line', a: 'arrow', x: 'eraser' };
+      const tm = { v: 'select', t: 'text', p: 'draw', h: 'highlight', r: 'rect', e: 'circle', l: 'line', a: 'arrow', x: 'eraser', n: 'note' };
       if (tm[key] && !ctrl && !e.shiftKey && !e.altKey) {
         setActiveTool(tm[key]); setSelectedIdx(null); e.preventDefault(); return;
       }
@@ -45,6 +59,9 @@ export default function usePdfKeyboard({
       if (ctrl && key === 'z' && !e.shiftKey) { undo(); e.preventDefault(); return; }
       if (ctrl && ((key === 'z' && e.shiftKey) || key === 'y')) { redo(); e.preventDefault(); return; }
       if (ctrl && key === 'd' && selectedIdx !== null) { duplicateAnn(selectedIdx); e.preventDefault(); return; }
+      if (ctrl && key === 'c' && selectedIdx !== null) { copyAnn(selectedIdx, false); e.preventDefault(); return; }
+      if (ctrl && key === 'x' && selectedIdx !== null) { copyAnn(selectedIdx, true); e.preventDefault(); return; }
+      if (ctrl && key === 'v' && clipboard) { pasteAnn(); e.preventDefault(); return; }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIdx !== null) { deleteAnn(selectedIdx); e.preventDefault(); return; }
 
       if (e.key === 'Escape') {
@@ -83,5 +100,6 @@ export default function usePdfKeyboard({
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); };
   }, [selectedIdx, currentPage, totalPages, deleteAnn, duplicateAnn, undo, redo,
       fitToWidth, setAnnsH, setActiveTool, setSelectedIdx, setEditingText,
-      setContextMenu, setZoom, setCurrentPage, setShowThumbs, setSpaceHeld, setIsPanning]);
+      setContextMenu, setZoom, setCurrentPage, setShowThumbs, setSpaceHeld, setIsPanning,
+      copyAnn, pasteAnn, clipboard, setSearchOpen, searchInputRef]);
 }

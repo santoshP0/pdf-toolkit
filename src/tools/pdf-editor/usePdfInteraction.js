@@ -119,6 +119,30 @@ export default function usePdfInteraction({
       return;
     }
 
+    if (activeTool === 'note') {
+      // Re-edit an existing text/note if clicked; else start a new note.
+      for (let i = pageAnns.length - 1; i >= 0; i--) {
+        if (pageAnns[i].type === 'text' && hitTest(pageAnns[i], pos.x, pos.y)) {
+          const ann = pageAnns[i];
+          setEditingText({
+            x: ann.x, y: ann.y,
+            value: ann.text, originalValue: ann.text, editIdx: i,
+            matchedFontSize: ann.fontSize,
+            matchedBold: ann.fontWeight >= 700,
+            matchedItalic: ann.fontStyle === 'italic',
+            matchedColor: ann.color,
+            note: !!ann.note,
+            clickX: pos.x,
+          });
+          setSelectedIdx(null);
+          return;
+        }
+      }
+      setEditingText({ x: pos.x, y: pos.y, value: '', note: true, matchedBold: textBold, matchedItalic: textItalic });
+      setSelectedIdx(null);
+      return;
+    }
+
     if (activeTool === 'text') {
       for (let i = pageAnns.length - 1; i >= 0; i--) {
         if (pageAnns[i].type === 'text' && hitTest(pageAnns[i], pos.x, pos.y)) {
@@ -130,6 +154,7 @@ export default function usePdfInteraction({
             matchedBold: ann.fontWeight >= 700,
             matchedItalic: ann.fontStyle === 'italic',
             matchedColor: ann.color,
+            note: !!ann.note,
             clickX: pos.x,
           });
           setSelectedIdx(null);
@@ -241,7 +266,14 @@ export default function usePdfInteraction({
             nextAnn.x = x; nextAnn.y = y; nextAnn.w = w; nextAnn.h = h;
           } else if (ann.type === 'text') {
             const scale = 1 + (resizeDirection.includes('e') ? dx : -dx) / Math.max(10, start.bounds.w);
-            nextAnn.fontSize = Math.max(8, Math.min(120, Math.round(start.ann.fontSize * scale)));
+            const nextSize = Math.max(8, Math.min(120, Math.round(start.ann.fontSize * scale)));
+            nextAnn.fontSize = nextSize;
+            // ponytail: scale note box by font ratio instead of remeasuring per-frame (stays snappy)
+            if (start.ann.noteBg) {
+              const f = nextSize / start.ann.fontSize;
+              const nb = start.ann.noteBg;
+              nextAnn.noteBg = { ...nb, y: nb.y + (start.ann.fontSize - nextSize), w: nb.w * f, h: nb.h * f };
+            }
           } else if (ann.type === 'line' || ann.type === 'arrow') {
             if (resizeDirection === 'nw' || resizeDirection === 'sw') {
               nextAnn.x1 = start.ann.x1 + dx; nextAnn.y1 = start.ann.y1 + dy;
@@ -336,7 +368,8 @@ export default function usePdfInteraction({
         setEditingText({
           x: ann.x, y: ann.y, value: ann.text, editIdx: i,
           matchedFontSize: ann.fontSize, matchedBold: ann.fontWeight >= 700,
-          matchedItalic: ann.fontStyle === 'italic', matchedFont: ann.fontFamily, clickX: pos.x,
+          matchedItalic: ann.fontStyle === 'italic', matchedFont: ann.fontFamily,
+          note: !!ann.note, clickX: pos.x,
         });
         setSelectedIdx(null);
         setActiveTool('text');

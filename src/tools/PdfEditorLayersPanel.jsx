@@ -119,7 +119,7 @@ function PdfEditorLayersPanel({
                       }
                     }
                   }}>
-                  <span style={S.layerIcon}>{TYPE_ICONS[ann.type] || '?'}</span>
+                  <span style={S.layerIcon}>{ann.note ? '📝' : (TYPE_ICONS[ann.type] || '?')}</span>
                   <span style={S.layerDot(ann.color)} />
                   <span style={S.layerName}>
                     {ann.type === 'text'

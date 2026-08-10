@@ -84,6 +84,31 @@ const S = {
     display: 'block',
   },
 
+  /* Search bar (floating over canvas area) */
+  searchBar: {
+    position: 'absolute', top: 10, right: 16, zIndex: 20,
+    display: 'flex', alignItems: 'center', gap: 4,
+    padding: '4px 6px', borderRadius: 8,
+    background: 'var(--surface)', border: '1px solid var(--border)',
+    boxShadow: '0 2px 10px rgba(0,0,0,0.12)',
+    fontFamily: 'var(--font-sans)',
+  },
+  searchInput: {
+    width: 160, border: 'none', outline: 'none', background: 'transparent',
+    fontSize: 12, color: 'var(--sketch-text)', fontFamily: 'var(--font-sans)',
+    padding: '2px 4px',
+  },
+  searchCount: {
+    fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)',
+    minWidth: 46, textAlign: 'center', whiteSpace: 'nowrap',
+  },
+  searchBtn: {
+    width: 22, height: 22, display: 'inline-flex', alignItems: 'center',
+    justifyContent: 'center', border: 'none', borderRadius: 4, padding: 0,
+    background: 'transparent', color: 'var(--sketch-text)', cursor: 'pointer',
+    boxShadow: 'none',
+  },
+
   /* Right panel */
   rightPanel: (visible) => ({
     width: visible ? 240 : 0, flexShrink: 0,
