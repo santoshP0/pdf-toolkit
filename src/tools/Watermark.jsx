@@ -2,14 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { PDFDocument, rgb, StandardFonts, degrees } from 'pdf-lib';
 import usePdfTool from './shared/usePdfTool';
 
-function getPdfjsLib() {
-  return import('pdfjs-dist').then(mod => {
-    if (!mod.GlobalWorkerOptions.workerSrc) {
-      mod.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${mod.version}/build/pdf.worker.min.mjs`;
-    }
-    return mod;
-  });
-}
+import { getPdfjsLib } from './shared/pdfjs';
 import { Dropzone, FileInfo, ActionRow } from './shared/PdfToolUI';
 // saveAs handled by usePdfTool.exportBlob
 
@@ -33,7 +26,7 @@ const makeImageLayer = (dataUrl, name, w, h) => ({
 
 export default function Watermark() {
   const tool = usePdfTool({ outputName: 'watermarked.pdf' });
-  const { file, setFile, pageCount, setPageCount, processing, setProcessing, dragOver, inputRef, dropzoneProps, onInputChange, reset } = tool;
+  const { file, setFile, pageCount, setPageCount, processing, setProcessing, dragOver, inputRef, dropzoneProps, reset } = tool;
 
   const [pdfBytes, setPdfBytes] = useState(null);
 
@@ -65,7 +58,7 @@ export default function Watermark() {
       return next;
     });
     if (selectedId === id) {
-      setSelectedId(prev => {
+      setSelectedId(() => {
         const remaining = layers.filter(l => l.id !== id);
         return remaining.length > 0 ? remaining[0].id : null;
       });
@@ -99,7 +92,7 @@ export default function Watermark() {
 
   /* ── Render first page preview ── */
   useEffect(() => {
-    if (!pdfBytes) { setPreviewUrl(null); return; }
+    if (!pdfBytes) return;
     let cancelled = false;
     (async () => {
       try {
@@ -222,7 +215,6 @@ export default function Watermark() {
       // Pre-embed all images — resized to actual target dimensions
       const embeddedImages = {};
       const maxPageW = Math.max(...pages.map(p => p.getSize().width));
-      const maxPageH = Math.max(...pages.map(p => p.getSize().height));
       for (const layer of layers) {
         if (layer.type !== 'image') continue;
         const targetW = maxPageW * (layer.scale / 100);
@@ -395,7 +387,7 @@ export default function Watermark() {
                       fontSize: '0.85rem',
                     }}>No layers yet. Add text or image above.</div>
                   )}
-                  {layers.map((l, i) => (
+                  {layers.map((l) => (
                     <div key={l.id}
                       onClick={() => setSelectedId(l.id)}
                       style={{

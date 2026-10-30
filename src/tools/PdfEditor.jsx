@@ -1,11 +1,13 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { storage } from './shared/storage';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { ChevronUp, ChevronDown, X } from 'lucide-react';
 
 import S from './pdf-editor/PdfEditorStyles';
 import {
-  COLORS, FONT_OPTIONS, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP, SNAP_THRESHOLD,
-  clamp, uid, getBounds, getHandleAt, hitTest, moveAnn, cloneAnn,
-  parseRichText, hexToRgb,
+  FONT_OPTIONS, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP, SNAP_THRESHOLD,
+  DEFAULT_FONT_CSS, NOTE_LAYOUT_VERSION, NOTE_MAX_WIDTH, NOTE_MIN_HEIGHT, NOTE_MIN_WIDTH,
+  clamp, uid, getBounds, hitTest, moveAnn, cloneAnn,
+  parseRichText, cleanHtmlToTags, wrapRichTextToWidth,
 } from './pdf-editor/helpers';
 import usePdfHistory from './pdf-editor/usePdfHistory';
 import usePdfDocument from './pdf-editor/usePdfDocument';
@@ -13,20 +15,18 @@ import usePdfInteraction from './pdf-editor/usePdfInteraction';
 import usePdfKeyboard from './pdf-editor/usePdfKeyboard';
 import usePdfExport from './pdf-editor/usePdfExport';
 import PdfEditorTextOverlay from './PdfEditorTextOverlay';
-import PdfEditorToolStrip, { TOOL_DEFS } from './PdfEditorToolStrip';
+import PdfEditorToolStrip from './PdfEditorToolStrip';
 import PdfEditorLayersPanel from './PdfEditorLayersPanel';
 import PdfEditorStatusBar from './PdfEditorStatusBar';
 import { PdfEditorContextMenu, PdfEditorConfirmModal } from './PdfEditorModals';
+import { PDF_EDITOR_UPDATED_AT_KEY } from './PdfEditorDB';
 
-export default function PdfEditor({ onBack, tool }) {
+export default function PdfEditor({ tool }) {
   /* ── UI-only state (not owned by any hook) ── */
   const [zoom, setZoom] = useState(1.0);
   const [activeTool, setActiveTool] = useState('select');
   const [dragOver, setDragOver] = useState(false);
-  const [showLayers, setShowLayers] = useState(true);
-  const [hoveredTool, setHoveredTool] = useState(null);
-  const [toolStripWidth, setToolStripWidth] = useState(140);
-  const toolStripResizing = useRef(false);
+  const [showLayers, setShowLayers] = useState(() => window.matchMedia('(min-width: 1051px)').matches);
   const [contextMenu, setContextMenu] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
   const [clipboard, setClipboard] = useState(null);
@@ -47,9 +47,28 @@ export default function PdfEditor({ onBack, tool }) {
   const scrollRef = useRef();
   const textInputRef = useRef();
   const isInteractingWithToolbarRef = useRef(false);
+  const toolbarReleaseTimerRef = useRef(null);
+  const committedTextSessionsRef = useRef(new Set());
   const rafRef = useRef(null);
   const selectedIdxRef = useRef(null);
   const currentPageRef = useRef(1);
+
+  const beginToolbarInteraction = useCallback(() => {
+    if (toolbarReleaseTimerRef.current) {
+      window.clearTimeout(toolbarReleaseTimerRef.current);
+      toolbarReleaseTimerRef.current = null;
+    }
+    isInteractingWithToolbarRef.current = true;
+  }, []);
+
+  const endToolbarInteraction = useCallback(() => {
+    if (!isInteractingWithToolbarRef.current) return;
+    if (toolbarReleaseTimerRef.current) window.clearTimeout(toolbarReleaseTimerRef.current);
+    toolbarReleaseTimerRef.current = window.setTimeout(() => {
+      isInteractingWithToolbarRef.current = false;
+      toolbarReleaseTimerRef.current = null;
+    }, 250);
+  }, []);
 
   /* ── History hook (must come first — provides setAnnotations etc) ── */
   const history = usePdfHistory({ selectedIdxRef, currentPageRef, FONT_OPTIONS });
@@ -58,7 +77,7 @@ export default function PdfEditor({ onBack, tool }) {
     history: histArr, setHistory, historyIdx, setHistoryIdx,
     selectedIdx, setSelectedIdx,
     strokeColor, setStrokeColor,
-    fillColor, setFillColor,
+    fillColor,
     strokeWidth, setStrokeWidth,
     textSize, setTextSize,
     selectedFont, setSelectedFont,
@@ -71,8 +90,7 @@ export default function PdfEditor({ onBack, tool }) {
   } = history;
 
   /* keep refs in sync */
-  selectedIdxRef.current = selectedIdx;
-  currentPageRef.current = 1; /* updated below after doc hook */
+  useLayoutEffect(() => { selectedIdxRef.current = selectedIdx; }, [selectedIdx]);
 
   /* ── Document hook ── */
   const doc = usePdfDocument({
@@ -82,13 +100,14 @@ export default function PdfEditor({ onBack, tool }) {
   const {
     file, pdfDoc, pdfBytes, pdfBytesRef,
     totalPages, currentPage, setCurrentPage,
+    documentError,
     pageSize, renderScale, loading, pageReady,
     pdfTextItems, thumbnails, showThumbs, setShowThumbs,
     loadFile, doClearWorkspace,
   } = doc;
 
   /* keep currentPageRef in sync */
-  currentPageRef.current = currentPage;
+  useLayoutEffect(() => { currentPageRef.current = currentPage; }, [currentPage]);
 
   /* ── Derived ── */
   const pageAnns = useMemo(() => annotations[currentPage] || [], [annotations, currentPage]);
@@ -98,14 +117,25 @@ export default function PdfEditor({ onBack, tool }) {
   useEffect(() => {
     if (pdfDoc) {
       try {
-        localStorage.setItem('pdf_editor_annotations', JSON.stringify(annotations));
-      } catch (e) {
+        storage.setItem('pdf_editor_annotations', JSON.stringify(annotations));
+      } catch {
         // QuotaExceededError — silently skip save
       }
-      localStorage.setItem('pdf_editor_current_page', currentPage.toString());
-      localStorage.setItem('pdf_editor_zoom', zoom.toString());
+      storage.setItem('pdf_editor_current_page', currentPage.toString());
+      storage.setItem('pdf_editor_zoom', zoom.toString());
+      storage.setItem(PDF_EDITOR_UPDATED_AT_KEY, Date.now().toString());
     }
   }, [annotations, currentPage, zoom, pdfDoc]);
+
+  useEffect(() => {
+    window.addEventListener('pointerup', endToolbarInteraction);
+    window.addEventListener('pointercancel', endToolbarInteraction);
+    return () => {
+      window.removeEventListener('pointerup', endToolbarInteraction);
+      window.removeEventListener('pointercancel', endToolbarInteraction);
+      if (toolbarReleaseTimerRef.current) window.clearTimeout(toolbarReleaseTimerRef.current);
+    };
+  }, [endToolbarInteraction]);
 
   /* ── Annotation CRUD ── */
   const addAnn = useCallback((ann) => {
@@ -246,10 +276,8 @@ export default function PdfEditor({ onBack, tool }) {
     selectedIdx,
   });
   const {
-    isDrawing, currentPath, shapeStart, shapePreview,
+    isDrawing, currentPath, shapePreview,
     editingText, setEditingText,
-    draggingIdx,
-    resizeDirection, resizeStartRef,
     isPanning, setIsPanning, spaceHeld, setSpaceHeld,
     hoveredTextItem,
     guides, setGuides,
@@ -287,10 +315,44 @@ export default function PdfEditor({ onBack, tool }) {
   /* ── commitText (in main — needs many deps) ── */
   const commitText = useCallback((value) => {
     if (!editingText) return;
+    const sessionKey = editingText.sessionId || editingText;
+    if (committedTextSessionsRef.current.has(sessionKey)) return;
+    committedTextSessionsRef.current.add(sessionKey);
+
+    const normalizedValue = typeof value === 'string' ? value : '';
+    const hasVisibleText = normalizedValue
+      .replace(/<\/?(?:b|i)>/gi, '')
+      .replace(/\u00a0/g, ' ')
+      .trim().length > 0;
+
     setGuides({ h: [], v: [] });
+    const detectedFont = editingText.detectedFont || editingText.matchedFont || DEFAULT_FONT_CSS;
     const resolvedFont = selectedFont === 'auto'
-      ? (editingText.matchedFont || '"Times New Roman", serif')
-      : (FONT_OPTIONS.find(f => f.id === selectedFont)?.css || '"Times New Roman", serif');
+      ? detectedFont
+      : (FONT_OPTIONS.find(f => f.id === selectedFont)?.css || DEFAULT_FONT_CSS);
+    const resolvedTextColor = editingText.matchedColor && editingText.matchedColor !== 'transparent'
+      ? editingText.matchedColor
+      : strokeColor;
+    const committedValue = editingText.note
+      ? wrapRichTextToWidth(
+          normalizedValue,
+          Math.max(8, Math.min(
+            NOTE_MAX_WIDTH,
+            pageSize.width - (editingText.x - 6) - 4,
+          ) - 14),
+          (text, style) => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return text.length * (editingText.matchedFontSize || textSize) * 0.55;
+            const fontSize = editingText.matchedFontSize || textSize;
+            const weight = style.bold || editingText.matchedBold
+              ? 700
+              : (editingText.matchedWeight || 400);
+            const fontStyle = style.italic || editingText.matchedItalic ? 'italic ' : '';
+            ctx.font = `${fontStyle}${weight} ${fontSize}px ${resolvedFont}`;
+            return ctx.measureText(text).width;
+          },
+        )
+      : normalizedValue;
     const buildWhiteout = (pi) => {
       let bgColor = '#ffffff';
       if (canvasRef.current) {
@@ -311,50 +373,113 @@ export default function PdfEditor({ onBack, tool }) {
       return {x:pi.x-4,y:pi.y-pi.height-4,w:pi.width+8,h:pi.height+10,bgColor};
     };
     // Padded box around the note text — measured once, only on commit.
-    const computeNoteBg = (x, y, text, fontSize) => {
+    const computeNoteLayout = (x, y, text, fontSize) => {
       const lines = (text||'').split('\n');
       let maxW = 0;
       const ctx = canvasRef.current?.getContext('2d');
       if (ctx) {
-        ctx.font = `${fontSize}px ${resolvedFont}`;
-        for (const l of lines) { const w = ctx.measureText(l.replace(/<\/?[bi]>/g,'')).width; if (w>maxW) maxW=w; }
+        for (const line of lines) {
+          let width = 0;
+          for (const segment of parseRichText(line)) {
+            const weight = segment.bold || editingText.matchedBold
+              ? 700
+              : (editingText.matchedWeight || 400);
+            const style = segment.italic || editingText.matchedItalic ? 'italic ' : '';
+            ctx.font = `${style}${weight} ${fontSize}px ${resolvedFont}`;
+            width += ctx.measureText(segment.text).width;
+          }
+          if (width > maxW) maxW = width;
+        }
       } else {
         maxW = Math.max(...lines.map(l=>l.replace(/<\/?[bi]>/g,'').length),1) * fontSize * 0.55;
       }
-      return { x:x-6, y:y-fontSize-6, w:maxW+12, h:lines.length*fontSize*1.25+12 };
+      const maxWidth = Math.min(NOTE_MAX_WIDTH, Math.max(40, pageSize.width - (x - 6) - 4));
+      const width = Math.min(Math.max(NOTE_MIN_WIDTH, maxW + 14), maxWidth);
+      const height = Math.max(NOTE_MIN_HEIGHT, lines.length * fontSize * 1.25 + 16);
+      const noteX = clamp(x - 6, 4, Math.max(4, pageSize.width - width - 4));
+      const noteY = clamp(y - fontSize - 6, 4, Math.max(4, pageSize.height - height - 4));
+      return {
+        x: noteX + 6,
+        y: noteY + fontSize + 6,
+        noteBg: { x: noteX, y: noteY, w: width, h: height },
+      };
     };
     if (editingText.editIdx != null) {
-      if (value.trim()) {
+      if (hasVisibleText) {
+        const fontSize = editingText.matchedFontSize || textSize;
+        const noteLayout = editingText.note
+          ? computeNoteLayout(editingText.x, editingText.y, committedValue, fontSize)
+          : null;
         const updates = {
-          text: value, fontFamily: resolvedFont,
-          fontSize: editingText.matchedFontSize||textSize,
+          text: committedValue, fontFamily: resolvedFont,
+          detectedFont,
+          detectedFontLabel: editingText.detectedFontLabel,
+          detectedFontCategory: editingText.detectedFontCategory,
+          fontSelection: selectedFont,
+          fontSize,
           fontWeight: editingText.matchedBold?700:(editingText.matchedWeight||400),
           fontStyle: editingText.matchedItalic?'italic':'normal',
-          color: editingText.matchedColor||strokeColor,
+          color: resolvedTextColor,
         };
-        if (editingText.note) updates.noteBg = computeNoteBg(editingText.x, editingText.y, value, updates.fontSize);
+        if (noteLayout) {
+          updates.x = noteLayout.x;
+          updates.y = noteLayout.y;
+          updates.noteBg = noteLayout.noteBg;
+          updates.noteLayoutVersion = NOTE_LAYOUT_VERSION;
+        }
         updateAnn(editingText.editIdx, updates);
       } else { deleteAnn(editingText.editIdx); }
-    } else if (editingText.pdfTextItem && !value.trim()) {
-      if (value !== editingText.originalValue) {
+    } else if (editingText.pdfTextItem && !hasVisibleText) {
+      if (normalizedValue !== editingText.originalValue) {
         const pi = editingText.pdfTextItem;
         addAnn({type:'text',x:editingText.x,y:editingText.y,text:'',color:'transparent',
           fontSize:editingText.matchedFontSize||textSize,fontWeight:400,fontStyle:'normal',
-          fontFamily:resolvedFont,whiteout:buildWhiteout(pi)});
+          fontFamily:resolvedFont,detectedFont,
+          detectedFontLabel:editingText.detectedFontLabel,
+          detectedFontCategory:editingText.detectedFontCategory,
+          fontSelection:selectedFont,whiteout:buildWhiteout(pi)});
       }
-    } else if (value.trim()) {
-      if (editingText.pdfTextItem && value===editingText.originalValue){setEditingText(null);return;}
-      const annData={type:'text',x:editingText.x,y:editingText.y,text:value,
-        color:editingText.matchedColor||strokeColor,
-        fontSize:editingText.matchedFontSize||textSize,
+    } else if (hasVisibleText) {
+      if (editingText.pdfTextItem && normalizedValue===editingText.originalValue){setEditingText(null);return;}
+      const fontSize = editingText.matchedFontSize || textSize;
+      const noteLayout = editingText.note
+        ? computeNoteLayout(editingText.x, editingText.y, committedValue, fontSize)
+        : null;
+      const annData={type:'text',x:noteLayout?.x ?? editingText.x,y:noteLayout?.y ?? editingText.y,text:committedValue,
+        color:resolvedTextColor,
+        fontSize,
         fontWeight:editingText.matchedBold?700:(editingText.matchedWeight||400),
-        fontStyle:editingText.matchedItalic?'italic':'normal',fontFamily:resolvedFont};
+        fontStyle:editingText.matchedItalic?'italic':'normal',fontFamily:resolvedFont,
+        detectedFont,detectedFontLabel:editingText.detectedFontLabel,
+        detectedFontCategory:editingText.detectedFontCategory,fontSelection:selectedFont};
       if (editingText.pdfTextItem) annData.whiteout=buildWhiteout(editingText.pdfTextItem);
-      if (editingText.note) { annData.note=true; annData.noteColor='#fff9c4'; annData.noteBg=computeNoteBg(editingText.x,editingText.y,value,annData.fontSize); }
+      if (noteLayout) {
+        annData.note = true;
+        annData.noteColor = '#fff9c4';
+        annData.noteBg = noteLayout.noteBg;
+        annData.noteLayoutVersion = NOTE_LAYOUT_VERSION;
+      }
       addAnn(annData);
     }
     setEditingText(null);
-  }, [editingText,updateAnn,deleteAnn,addAnn,strokeColor,textSize,selectedFont,pageSize,setGuides,canvasRef]);
+  }, [editingText,updateAnn,deleteAnn,addAnn,strokeColor,textSize,selectedFont,pageSize,setGuides,canvasRef,setEditingText]);
+
+  const finishEditingText = useCallback(() => {
+    if (!editingText) return false;
+    const liveHtml = textInputRef.current?.innerHTML;
+    const value = liveHtml == null
+      ? (editingText.value || '')
+      : cleanHtmlToTags(liveHtml);
+    commitText(value);
+    return true;
+  }, [editingText, commitText]);
+
+  const handleEditorPointerDownCapture = useCallback((event) => {
+    if (!editingText) return;
+    const target = event.target;
+    if (target?.closest?.('.pdf-editor-contenteditable, .formatting-bar, .pdf-editor-context-options')) return;
+    finishEditingText();
+  }, [editingText, finishEditingText]);
 
   /* ── Export ── */
   const { exportPdf, processing } = usePdfExport({ pdfBytesRef, pdfBytes, file, annotations, pageSize, onExported: doClearWorkspace });
@@ -400,6 +525,7 @@ export default function PdfEditor({ onBack, tool }) {
     setSpaceHeld, setIsPanning,
     copyAnn, pasteAnn, clipboard,
     setSearchOpen, searchInputRef,
+    editingText,
   });
 
   /* ── Search: build cross-page text index (lazy, cached per doc) & find ── */
@@ -474,7 +600,7 @@ export default function PdfEditor({ onBack, tool }) {
       ctx.fillStyle=ann.noteColor||'#fff9c4'; ctx.strokeStyle='#e0c94a'; ctx.lineWidth=1;
       if(ctx.roundRect){ctx.beginPath();ctx.roundRect(nb.x,nb.y,nb.w,nb.h,4);ctx.fill();ctx.stroke();}
       else{ctx.fillRect(nb.x,nb.y,nb.w,nb.h);ctx.strokeRect(nb.x,nb.y,nb.w,nb.h);}
-      const fc=8; ctx.fillStyle='#e0c94a'; ctx.beginPath();
+      const fc=10; ctx.fillStyle='#e0c94a'; ctx.beginPath();
       ctx.moveTo(nb.x+nb.w-fc,nb.y+nb.h); ctx.lineTo(nb.x+nb.w,nb.y+nb.h-fc); ctx.lineTo(nb.x+nb.w,nb.y+nb.h); ctx.closePath(); ctx.fill();
       ctx.restore();
     };
@@ -522,7 +648,7 @@ export default function PdfEditor({ onBack, tool }) {
       } else if (ann.type==='text') {
         if(ann.whiteout){ctx.save();ctx.fillStyle=ann.whiteout.bgColor||'#ffffff';ctx.fillRect(ann.whiteout.x,ann.whiteout.y,ann.whiteout.w,ann.whiteout.h);ctx.restore();}
         if(ann.note&&ann.noteBg) drawNoteBox(ann);
-        const ff=ann.fontFamily||'"Times New Roman", serif';
+        const ff=ann.fontFamily||DEFAULT_FONT_CSS;
         ctx.fillStyle=ann.color;
         const lines=(ann.text||'').split('\n'),lh=ann.fontSize*1.25;
         lines.forEach((line,li)=>{
@@ -540,7 +666,6 @@ export default function PdfEditor({ onBack, tool }) {
     pageAnns.forEach((ann,idx)=>{
       if(editingText?.editIdx===idx){
         if(ann.whiteout){ctx.save();ctx.fillStyle=ann.whiteout.bgColor||'#ffffff';ctx.fillRect(ann.whiteout.x,ann.whiteout.y,ann.whiteout.w,ann.whiteout.h);ctx.restore();}
-        if(ann.note&&ann.noteBg) drawNoteBox(ann);
         return;
       }
       drawAnn(ann);
@@ -664,10 +789,47 @@ export default function PdfEditor({ onBack, tool }) {
 
   /* ── Editor render ── */
   return (
-    <div style={S.wrapper}>
-      <div style={S.body}>
+    <div
+      className="pdf-editor-shell"
+      style={S.wrapper}
+      onPointerDownCapture={handleEditorPointerDownCapture}
+    >
+      <PdfEditorStatusBar
+        file={file}
+        currentPage={currentPage} totalPages={totalPages} setCurrentPage={setCurrentPage}
+        zoom={zoom} setZoom={setZoom}
+        showThumbs={showThumbs} setShowThumbs={setShowThumbs}
+        showLayers={showLayers} setShowLayers={setShowLayers}
+        totalAnns={totalAnns} processing={processing}
+        hasActiveEdit={Boolean(editingText)}
+        handleClearWorkspace={handleClearWorkspace} exportPdf={exportPdf}
+        fitToWidth={fitToWidth} setSelectedIdx={setSelectedIdx}
+        clamp={clamp} ZOOM_MIN={ZOOM_MIN} ZOOM_MAX={ZOOM_MAX}
+        undo={undo} redo={redo}
+        canUndo={historyIdx > 0} canRedo={historyIdx < histArr.length - 1}
+        setSearchOpen={setSearchOpen}
+      />
+
+      <div className="pdf-editor-body" style={S.body}>
+        <PdfEditorToolStrip
+          activeTool={activeTool} setActiveTool={setActiveTool}
+          strokeColor={strokeColor} setStrokeColorSync={setStrokeColorSync}
+          fillColor={fillColor} setFillColorSync={setFillColorSync}
+          strokeWidth={strokeWidth} setStrokeWidthSync={setStrokeWidthSync}
+          textSize={textSize} setTextSizeSync={setTextSizeSync}
+          textBold={textBold} setTextBoldSync={setTextBoldSync}
+          textItalic={textItalic} setTextItalicSync={setTextItalicSync}
+          selectedFont={selectedFont} setSelectedFontSync={setSelectedFontSync}
+          setSelectedIdx={setSelectedIdx}
+          editingText={editingText} setEditingText={setEditingText}
+          finishEditingText={finishEditingText}
+          beginToolbarInteraction={beginToolbarInteraction}
+          endToolbarInteraction={endToolbarInteraction}
+          FONT_OPTIONS={FONT_OPTIONS}
+        />
+
         {/* Thumbnail strip */}
-        <div style={S.thumbStrip(showThumbs)}>
+        <div className="pdf-editor-thumbnail-strip" style={S.thumbStrip(showThumbs)}>
           {showThumbs && Array.from({length:totalPages},(_,i)=>i+1).map(pg=>(
             <div key={pg} style={S.thumbItem(pg===currentPage)} onClick={()=>{setCurrentPage(pg);setSelectedIdx(null);}}>
               {thumbnails[pg]
@@ -678,30 +840,11 @@ export default function PdfEditor({ onBack, tool }) {
           ))}
         </div>
 
-        {/* Left toolbar */}
-        <PdfEditorToolStrip
-          S={S}
-          activeTool={activeTool} setActiveTool={setActiveTool}
-          toolStripWidth={toolStripWidth} setToolStripWidth={setToolStripWidth} toolStripResizing={toolStripResizing}
-          hoveredTool={hoveredTool} setHoveredTool={setHoveredTool}
-          strokeColor={strokeColor} setStrokeColorSync={setStrokeColorSync}
-          fillColor={fillColor} setFillColorSync={setFillColorSync}
-          strokeWidth={strokeWidth} setStrokeWidthSync={setStrokeWidthSync}
-          textSize={textSize} setTextSizeSync={setTextSizeSync}
-          textBold={textBold} setTextBoldSync={setTextBoldSync}
-          textItalic={textItalic} setTextItalicSync={setTextItalicSync}
-          selectedFont={selectedFont} setSelectedFontSync={setSelectedFontSync}
-          selectedIdx={selectedIdx} setSelectedIdx={setSelectedIdx}
-          editingText={editingText} setEditingText={setEditingText}
-          pageAnns={pageAnns}
-          isInteractingWithToolbarRef={isInteractingWithToolbarRef}
-          FONT_OPTIONS={FONT_OPTIONS}
-        />
-
         {/* Canvas area */}
-        <div style={{...S.canvasArea,cursor}} onWheel={handleWheel}>
+        <div className="pdf-editor-canvas-area" style={{...S.canvasArea,cursor}} onWheel={handleWheel}>
+          {documentError && <div role="alert" style={{ padding: 16, background: 'var(--surface)', color: 'var(--text)' }}>{documentError}</div>}
           {searchOpen && (
-            <div style={S.searchBar}>
+            <div className="pdf-editor-search-bar" style={S.searchBar}>
               <input ref={searchInputRef} value={searchQuery} placeholder="Find in document"
                 onChange={e=>setSearchQuery(e.target.value)}
                 onKeyDown={e=>{
@@ -717,32 +860,36 @@ export default function PdfEditor({ onBack, tool }) {
               <button style={S.searchBtn} onClick={closeSearch} title="Close (Esc)"><X size={14}/></button>
             </div>
           )}
-          <div ref={scrollRef} style={S.canvasScroller}>
-            <div style={S.canvasContainer(zoom)}>
-              <canvas ref={canvasRef} style={S.pageShadow} />
-              <canvas ref={overlayRef}
-                style={{position:'absolute',top:0,left:0,width:pageSize.width,height:pageSize.height,pointerEvents:editingText?'none':'auto',visibility:pageReady?'visible':'hidden'}}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onDoubleClick={handleDoubleClick}
-                onContextMenu={handleContextMenu} />
-              <PdfEditorTextOverlay
-                editingText={editingText} setEditingText={setEditingText}
-                textInputRef={textInputRef} pageSize={pageSize}
-                textSize={textSize} setTextSize={setTextSize}
-                strokeColor={strokeColor} setStrokeColor={setStrokeColor}
-                commitText={commitText} setGuides={setGuides}
-                isInteractingWithToolbarRef={isInteractingWithToolbarRef}
-                handleEditorFormat={handleEditorFormat}
-                FONT_OPTIONS={FONT_OPTIONS} selectedFont={selectedFont} setSelectedFont={setSelectedFont}
-              />
+          <div ref={scrollRef} className="pdf-editor-canvas-scroller" style={S.canvasScroller}>
+            <div className="pdf-editor-page-stage" style={S.pageStage(pageSize, zoom)}>
+              <div style={S.canvasContainer(zoom)}>
+                <canvas ref={canvasRef} style={S.pageShadow} />
+                <canvas ref={overlayRef}
+                  style={{position:'absolute',top:0,left:0,width:pageSize.width,height:pageSize.height,pointerEvents:editingText?'none':'auto',visibility:pageReady?'visible':'hidden'}}
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onDoubleClick={handleDoubleClick}
+                  onContextMenu={handleContextMenu} />
+                <PdfEditorTextOverlay
+                  editingText={editingText} setEditingText={setEditingText}
+                  textInputRef={textInputRef} pageSize={pageSize}
+                  textSize={textSize} setTextSize={setTextSize}
+                  strokeColor={strokeColor} setStrokeColor={setStrokeColor}
+                  commitText={commitText} setGuides={setGuides}
+                  isInteractingWithToolbarRef={isInteractingWithToolbarRef}
+                  beginToolbarInteraction={beginToolbarInteraction}
+                  endToolbarInteraction={endToolbarInteraction}
+                  handleEditorFormat={handleEditorFormat}
+                  FONT_OPTIONS={FONT_OPTIONS} selectedFont={selectedFont} setSelectedFont={setSelectedFont}
+                />
+              </div>
             </div>
           </div>
         </div>
 
         {/* Right layers panel */}
-        <div style={S.rightPanel(showLayers)}>
+        <aside className="pdf-editor-right-panel" style={S.rightPanel(showLayers)} aria-label="Layers and properties">
           <PdfEditorLayersPanel
             S={S} showLayers={showLayers}
             pageAnns={pageAnns}
@@ -755,24 +902,10 @@ export default function PdfEditor({ onBack, tool }) {
             deleteAnn={deleteAnn} reorderLayers={reorderLayers}
             dragOverLayerIdx={dragOverLayerIdx} setDragOverLayerIdx={setDragOverLayerIdx}
             setConfirmModal={setConfirmModal} setAnnsH={setAnnsH} currentPage={currentPage}
-            totalAnns={totalAnns} historyIdx={historyIdx} historyLength={histArr.length}
             FONT_OPTIONS={FONT_OPTIONS} getBounds={getBounds}
           />
-        </div>
+        </aside>
       </div>
-
-      {/* Status bar */}
-      <PdfEditorStatusBar
-        S={S} file={file}
-        currentPage={currentPage} totalPages={totalPages} setCurrentPage={setCurrentPage}
-        zoom={zoom} setZoom={setZoom}
-        showThumbs={showThumbs} setShowThumbs={setShowThumbs}
-        showLayers={showLayers} setShowLayers={setShowLayers}
-        totalAnns={totalAnns} processing={processing}
-        handleClearWorkspace={handleClearWorkspace} exportPdf={exportPdf}
-        fitToWidth={fitToWidth} setSelectedIdx={setSelectedIdx}
-        clamp={clamp} ZOOM_MIN={ZOOM_MIN} ZOOM_MAX={ZOOM_MAX}
-      />
 
       {/* Context menu */}
       <PdfEditorContextMenu

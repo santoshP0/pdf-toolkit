@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { PDFDocument } from 'pdf-lib';
-import { formatSize } from '../App';
+import { formatSize } from './shared/format';
 import usePdfTool from './shared/usePdfTool';
 import { Dropzone, ProgressBar, ActionRow } from './shared/PdfToolUI';
 

@@ -7,7 +7,7 @@ import { hexToRgb, parseRichText } from './helpers';
    usePdfExport hook
    Owns: processing state
    ================================================================ */
-export default function usePdfExport({ pdfBytesRef, pdfBytes, file, annotations, pageSize, onExported }) {
+export default function usePdfExport({ pdfBytesRef, pdfBytes, file, annotations, onExported }) {
   const [processing, setProcessing] = useState(false);
 
   const exportPdf = useCallback(async () => {
@@ -45,9 +45,11 @@ export default function usePdfExport({ pdfBytesRef, pdfBytes, file, annotations,
       Object.entries(annotations).forEach(([pageNum, anns]) => {
         const page = pages[parseInt(pageNum) - 1];
         if (!page) return;
-        const { width, height } = page.getSize();
-        const sx = width / pageSize.width;
-        const sy = height / pageSize.height;
+        const { height } = page.getSize();
+        // Annotation coordinates use the editor's fixed render scale (1.5),
+        // even when the PDF contains pages with different dimensions.
+        const sx = 1 / 1.5;
+        const sy = 1 / 1.5;
 
         anns.forEach(ann => {
           const color = hexToRgb(ann.color);
@@ -69,8 +71,8 @@ export default function usePdfExport({ pdfBytesRef, pdfBytes, file, annotations,
               page.drawRectangle({ x: nb.x * sx, y: height - (nb.y + nb.h) * sy, width: nb.w * sx, height: nb.h * sy, color: hexToRgb(ann.noteColor || '#fff9c4'), borderWidth: 0 });
             }
             const ff = ann.fontFamily || '';
-            const isSerif = /times|georgia|garamond|palatino|serif/i.test(ff) && !/sans/i.test(ff);
-            const isMono = /courier|mono/i.test(ff);
+            const isSerif = /times|georgia|cambria|garamond|palatino|baskerville|serif/i.test(ff) && !/sans/i.test(ff);
+            const isMono = /courier|consolas|menlo|monaco|mono/i.test(ff);
             const isBold = ann.fontWeight >= 700;
             const isItalic = ann.fontStyle === 'italic';
             const pickFont = (bold, italic) => {
@@ -138,7 +140,7 @@ export default function usePdfExport({ pdfBytesRef, pdfBytes, file, annotations,
     } finally {
       setProcessing(false);
     }
-  }, [pdfBytesRef, pdfBytes, file, annotations, pageSize, onExported]);
+  }, [pdfBytesRef, pdfBytes, file, annotations, onExported]);
 
   return { exportPdf, processing };
 }

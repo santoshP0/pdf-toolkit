@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import usePdfTool from './shared/usePdfTool';
 import { loadPdfjsDoc, renderPageToCanvas } from './shared/pdfjs';
 import { Dropzone, FileInfo, ProgressBar, ActionRow } from './shared/PdfToolUI';
@@ -17,6 +17,10 @@ export default function OcrText({ onSwitchToExtract }) {
   const [text, setText] = useState('');
   const [preview, setPreview] = useState(null);
   const [statusMsg, setStatusMsg] = useState('');
+
+  useEffect(() => () => {
+    if (preview) URL.revokeObjectURL(preview);
+  }, [preview]);
 
   const loadFile = (f) => {
     if (!f) return;
@@ -57,39 +61,43 @@ export default function OcrText({ onSwitchToExtract }) {
     setProgress(0);
     setText('');
     setStatusMsg('Loading OCR engine...');
+    let worker;
+    let pdfDocument;
 
     try {
-      let imageSources = [];
-
+      let pageCount = 1;
       if (file.type === 'application/pdf') {
-        const doc = await loadPdfjsDoc(await file.arrayBuffer());
-        for (let i = 1; i <= doc.numPages; i++) {
-          const page = await doc.getPage(i);
-          const { canvas } = await renderPageToCanvas(page, 2);
-          imageSources.push(canvas.toDataURL('image/png'));
-        }
-      } else {
-        const dataUrl = await new Promise(resolve => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result);
-          reader.readAsDataURL(file);
-        });
-        imageSources.push(dataUrl);
+        pdfDocument = await loadPdfjsDoc(await file.arrayBuffer());
+        pageCount = pdfDocument.numPages;
       }
 
       const Tesseract = await import('tesseract.js');
+      const runtime = `${import.meta.env.BASE_URL}runtime/ocr`;
+      let currentIndex = 0;
+      worker = await Tesseract.createWorker('eng', 1, {
+        workerPath: `${runtime}/worker.min.js`,
+        corePath: `${runtime}/tesseract-core-lstm.wasm.js`,
+        langPath: runtime,
+        workerBlobURL: false,
+        logger: message => {
+          if (message.status === 'recognizing text') {
+            setProgress(Math.round((currentIndex + message.progress) / pageCount * 100));
+          }
+        },
+      });
       let allText = '';
 
-      for (let i = 0; i < imageSources.length; i++) {
-        setStatusMsg(`Recognizing page ${i + 1} of ${imageSources.length}...`);
-        const result = await Tesseract.recognize(imageSources[i], 'eng', {
-          logger: (m) => {
-            if (m.status === 'recognizing text') {
-              const pageProgress = (i + m.progress) / imageSources.length;
-              setProgress(Math.round(pageProgress * 100));
-            }
-          }
-        });
+      for (let i = 0; i < pageCount; i++) {
+        currentIndex = i;
+        setStatusMsg(`Recognizing page ${i + 1} of ${pageCount}...`);
+        let pageCanvas;
+        if (pdfDocument) {
+          const page = await pdfDocument.getPage(i + 1);
+          const { canvas } = await renderPageToCanvas(page, 2);
+          pageCanvas = canvas;
+        }
+        const result = await worker.recognize(pageCanvas || file);
+        if (pageCanvas) { pageCanvas.width = 0; pageCanvas.height = 0; }
         allText += (i > 0 ? '\n\n--- Page ' + (i + 1) + ' ---\n\n' : '') + result.data.text;
       }
 
@@ -99,6 +107,8 @@ export default function OcrText({ onSwitchToExtract }) {
       alert('OCR error: ' + err.message);
       setStatusMsg('');
     } finally {
+      if (worker) await worker.terminate();
+      if (pdfDocument) await pdfDocument.destroy();
       setProcessing(false);
     }
   };

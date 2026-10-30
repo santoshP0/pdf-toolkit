@@ -1,115 +1,146 @@
 import { memo } from 'react';
-import { formatSize } from '../App';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  FilePlus2,
+  Layers3,
+  Maximize2,
+  Minus,
+  PanelLeft,
+  Plus,
+  Redo2,
+  Search,
+  Undo2,
+} from 'lucide-react';
+import { formatSize } from './shared/format';
 
 function PdfEditorStatusBar({
-  S,
   file,
   currentPage, totalPages, setCurrentPage,
   zoom, setZoom,
   showThumbs, setShowThumbs,
   showLayers, setShowLayers,
-  totalAnns, processing,
+  totalAnns, processing, hasActiveEdit = false,
   handleClearWorkspace, exportPdf,
   fitToWidth, setSelectedIdx,
   clamp, ZOOM_MIN, ZOOM_MAX,
+  undo, redo, canUndo = false, canRedo = false,
+  setSearchOpen,
 }) {
+  const hasFileSize = Number.isFinite(file?.size) && file.size >= 0;
+  const exportDisabled = processing || (totalAnns === 0 && !hasActiveEdit);
+
+  const goToPreviousPage = () => {
+    setCurrentPage(page => Math.max(1, page - 1));
+    setSelectedIdx(null);
+  };
+
+  const goToNextPage = () => {
+    setCurrentPage(page => Math.min(totalPages, page + 1));
+    setSelectedIdx(null);
+  };
+
   return (
-    <div style={S.statusBar}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        {/* File info */}
-        <span style={{ fontFamily: 'var(--font-sans)', fontSize: 10, fontWeight: 600, color: 'var(--sketch-text)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {file.name}
-        </span>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'var(--text-muted)' }}>
-          {formatSize(file.size)}
-        </span>
+    <>
+    <header className="pdf-editor-command-bar" aria-label="PDF editor controls">
+      <div className="pdf-editor-command-file">
+        <div className="pdf-editor-command-file-copy">
+          <span className="pdf-editor-command-filename" title={file?.name || 'PDF document'}>
+            {file?.name || 'PDF document'}
+          </span>
+          {hasFileSize && (
+            <span className="pdf-editor-command-filesize">{formatSize(file.size)}</span>
+          )}
+        </div>
 
-        <span style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 3px' }} />
-
-        {/* Page nav */}
-        <button style={S.navBtn(currentPage <= 1)} disabled={currentPage <= 1}
-          onClick={() => { setCurrentPage(p => Math.max(1, p - 1)); setSelectedIdx(null); }}>{'\u2190'}</button>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, minWidth: 32, textAlign: 'center' }}>
-          {currentPage}/{totalPages}
-        </span>
-        <button style={S.navBtn(currentPage >= totalPages)} disabled={currentPage >= totalPages}
-          onClick={() => { setCurrentPage(p => Math.min(totalPages, p + 1)); setSelectedIdx(null); }}>{'\u2192'}</button>
-
-        <span style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 3px' }} />
-
-        {/* Zoom */}
-        <button style={S.navBtn(false)} onClick={() => setZoom(z => clamp(z - 0.1, ZOOM_MIN, ZOOM_MAX))}>{'\u2212'}</button>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)', minWidth: 30, textAlign: 'center' }}>
-          {Math.round(zoom * 100)}%
-        </span>
-        <button style={S.navBtn(false)} onClick={() => setZoom(z => clamp(z + 0.1, ZOOM_MIN, ZOOM_MAX))}>+</button>
-        <button style={{ ...S.navBtn(false), width: 'auto', padding: '0 5px', fontSize: 9, fontFamily: 'var(--font-sans)' }}
-          onClick={fitToWidth} title="Fit to width (Ctrl+0)">fit</button>
-
-        <span style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 3px' }} />
-
-        {/* Toggle buttons */}
-        <button style={{
-          ...S.navBtn(false), width: 'auto', padding: '0 5px', fontSize: 9,
-          fontFamily: 'var(--font-sans)',
-          background: showThumbs ? 'var(--cat-edit-bg)' : 'transparent',
-          color: showThumbs ? 'var(--cat-edit)' : undefined,
-          opacity: showThumbs ? 1 : 0.5,
-        }} onClick={() => setShowThumbs(v => !v)} title="Toggle thumbnails (Ctrl+L)">pages</button>
-        <button style={{
-          ...S.navBtn(false), width: 'auto', padding: '0 5px', fontSize: 9,
-          fontFamily: 'var(--font-sans)',
-          background: showLayers ? 'var(--cat-edit-bg)' : 'transparent',
-          color: showLayers ? 'var(--cat-edit)' : undefined,
-          opacity: showLayers ? 1 : 0.5,
-        }} onClick={() => setShowLayers(v => !v)} title="Toggle layers panel">layers</button>
-
-        <span style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 3px' }} />
-
-        <button
-          onClick={handleClearWorkspace}
-          title="Close current file and open a new one"
-          style={{
-            padding: '5px 14px', borderRadius: 8,
-            border: '1.5px solid #3b82f6',
-            background: 'rgba(59,130,246,0.08)', color: '#3b82f6',
-            fontSize: 10, fontWeight: 700, cursor: 'pointer',
-            fontFamily: 'var(--font-hand)',
-            letterSpacing: '0.01em',
-            transition: 'all 0.15s',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.background = '#3b82f6'; e.currentTarget.style.color = '#fff'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.08)'; e.currentTarget.style.color = '#3b82f6'; }}
-        >open new file</button>
+        <div className="pdf-editor-command-history" role="group" aria-label="Editing history and search">
+          <button type="button" className="pdf-editor-command-icon-button" onClick={undo}
+            disabled={!canUndo || !undo} aria-label="Undo" title="Undo (Ctrl+Z)">
+            <Undo2 size={17} aria-hidden="true" />
+          </button>
+          <button type="button" className="pdf-editor-command-icon-button" onClick={redo}
+            disabled={!canRedo || !redo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">
+            <Redo2 size={17} aria-hidden="true" />
+          </button>
+          <button type="button" className="pdf-editor-command-icon-button"
+            onClick={() => setSearchOpen?.(true)} disabled={!setSearchOpen}
+            aria-label="Search document" title="Search document (Ctrl+F)">
+            <Search size={17} aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 8, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-          {totalAnns > 0 ? `${totalAnns} annotation${totalAnns > 1 ? 's' : ''}` : ''}
-        </span>
-        <button
-          disabled={processing || totalAnns === 0}
+      <div className="pdf-editor-command-actions">
+        <div className="pdf-editor-command-panels" role="group" aria-label="Editor panels">
+          <button type="button" className={`pdf-editor-command-toggle${showThumbs ? ' is-active' : ''}`}
+            onClick={() => setShowThumbs(value => !value)} aria-label="Toggle page thumbnails"
+            aria-pressed={showThumbs} title="Toggle page thumbnails (Ctrl+L)">
+            <PanelLeft size={16} aria-hidden="true" /><span>Pages</span>
+          </button>
+          <button type="button" className={`pdf-editor-command-toggle${showLayers ? ' is-active' : ''}`}
+            onClick={() => setShowLayers(value => !value)} aria-label="Toggle layers panel"
+            aria-pressed={showLayers} title="Toggle layers panel">
+            <Layers3 size={16} aria-hidden="true" /><span>Layers</span>
+          </button>
+        </div>
+
+        <button type="button" className="pdf-editor-command-new-button"
+          onClick={handleClearWorkspace} title="Close this file and open another PDF">
+          <FilePlus2 size={16} aria-hidden="true" /><span>Open new</span>
+        </button>
+
+        <button type="button" className="pdf-editor-command-export-button" disabled={exportDisabled}
           onClick={exportPdf}
-          title="Export annotated PDF"
-          style={{
-            padding: '5px 16px', borderRadius: 8,
-            border: '1.5px solid #ef4444',
-            background: (processing || totalAnns === 0) ? 'rgba(239,68,68,0.04)' : '#ef4444',
-            color: (processing || totalAnns === 0) ? '#ef4444' : '#fff',
-            fontSize: 10, fontWeight: 700, cursor: (processing || totalAnns === 0) ? 'default' : 'pointer',
-            fontFamily: 'var(--font-hand)',
-            letterSpacing: '0.01em',
-            transition: 'all 0.15s',
-            opacity: (processing || totalAnns === 0) ? 0.4 : 1,
-            boxShadow: (processing || totalAnns === 0) ? 'none' : '0 2px 8px rgba(239,68,68,0.25)',
-          }}
-          onMouseEnter={e => { if (!e.currentTarget.disabled) { e.currentTarget.style.background = '#dc2626'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(239,68,68,0.35)'; }}}
-          onMouseLeave={e => { if (!e.currentTarget.disabled) { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(239,68,68,0.25)'; }}}
-        >
-          {processing ? 'exporting...' : 'export pdf'}
+          title={totalAnns === 0 ? 'Add an annotation before exporting' : 'Export annotated PDF'}>
+          <Download size={17} aria-hidden="true" />
+          <span>{processing ? 'Exporting…' : 'Export PDF'}</span>
+          {totalAnns > 0 && !processing && (
+            <span className="pdf-editor-command-annotation-count" aria-label={`${totalAnns} annotations`}>
+              {totalAnns}
+            </span>
+          )}
         </button>
       </div>
-    </div>
+    </header>
+    <footer className="pdf-editor-canvas-footer" aria-label="Canvas navigation controls">
+      <div className="pdf-editor-command-navigation" aria-label="Page and zoom controls">
+        <div className="pdf-editor-command-page-controls" role="group" aria-label="Page navigation">
+          <button type="button" className="pdf-editor-command-icon-button" disabled={currentPage <= 1}
+            onClick={goToPreviousPage} aria-label="Previous page" title="Previous page">
+            <ChevronLeft size={18} aria-hidden="true" />
+          </button>
+          <span className="pdf-editor-command-page-count" aria-label={`Page ${currentPage} of ${totalPages}`}>
+            <strong>{currentPage}</strong><span aria-hidden="true"> / </span><span>{totalPages}</span>
+          </span>
+          <button type="button" className="pdf-editor-command-icon-button" disabled={currentPage >= totalPages}
+            onClick={goToNextPage} aria-label="Next page" title="Next page">
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        <span className="pdf-editor-command-divider" aria-hidden="true" />
+
+        <div className="pdf-editor-command-zoom-controls" role="group" aria-label="Zoom controls">
+          <button type="button" className="pdf-editor-command-icon-button"
+            onClick={() => setZoom(value => clamp(value - 0.1, ZOOM_MIN, ZOOM_MAX))}
+            aria-label="Zoom out" title="Zoom out">
+            <Minus size={17} aria-hidden="true" />
+          </button>
+          <span className="pdf-editor-command-zoom-value">{Math.round(zoom * 100)}%</span>
+          <button type="button" className="pdf-editor-command-icon-button"
+            onClick={() => setZoom(value => clamp(value + 0.1, ZOOM_MIN, ZOOM_MAX))}
+            aria-label="Zoom in" title="Zoom in">
+            <Plus size={17} aria-hidden="true" />
+          </button>
+          <button type="button" className="pdf-editor-command-fit-button" onClick={fitToWidth}
+            aria-label="Fit page to width" title="Fit to width (Ctrl+0)">
+            <Maximize2 size={15} aria-hidden="true" /><span>Fit</span>
+          </button>
+        </div>
+      </div>
+    </footer>
+    </>
   );
 }
 

@@ -1,16 +1,45 @@
-import { useState, useRef, useCallback } from 'react';
-import { MAX_HISTORY } from './helpers';
+import { useState, useReducer, useCallback } from 'react';
+import { DEFAULT_FONT_CSS, MAX_HISTORY } from './helpers';
+
+const snapshot = value => JSON.parse(JSON.stringify(value));
+const resolveUpdate = (update, previous) => typeof update === 'function' ? update(previous) : update;
+
+function historyReducer(state, action) {
+  if (action.type === 'setAnnotations') {
+    return { ...state, annotations: resolveUpdate(action.value, state.annotations) };
+  }
+  if (action.type === 'setHistory') {
+    return { ...state, history: resolveUpdate(action.value, state.history) };
+  }
+  if (action.type === 'setHistoryIdx') {
+    return { ...state, historyIdx: resolveUpdate(action.value, state.historyIdx) };
+  }
+  if (action.type === 'edit' || action.type === 'checkpoint') {
+    const annotations = action.type === 'edit'
+      ? resolveUpdate(action.value, state.annotations)
+      : (action.value ?? state.annotations);
+    const history = [...state.history.slice(0, state.historyIdx + 1), snapshot(annotations)].slice(-MAX_HISTORY);
+    return { annotations, history, historyIdx: history.length - 1 };
+  }
+  if (action.type === 'undo' || action.type === 'redo') {
+    const index = state.historyIdx + (action.type === 'undo' ? -1 : 1);
+    if (index < 0 || index >= state.history.length) return state;
+    return { ...state, annotations: snapshot(state.history[index]), historyIdx: index };
+  }
+  return state;
+}
 
 /* ================================================================
    usePdfHistory hook
    Owns: annotations, history, historyIdx, skipHistoryRef, selectedIdx
    ================================================================ */
 export default function usePdfHistory({ selectedIdxRef, currentPageRef, FONT_OPTIONS }) {
-  const [annotations, setAnnotations] = useState({});
-  const [history, setHistory] = useState([]);
-  const [historyIdx, setHistoryIdx] = useState(-1);
-  const historyIdxRef = useRef(-1);
-  const skipHistoryRef = useRef(false);
+  const [{ annotations, history, historyIdx }, dispatch] = useReducer(historyReducer, {
+    annotations: {}, history: [], historyIdx: -1,
+  });
+  const setAnnotations = useCallback(value => dispatch({ type: 'setAnnotations', value }), []);
+  const setHistory = useCallback(value => dispatch({ type: 'setHistory', value }), []);
+  const setHistoryIdx = useCallback(value => dispatch({ type: 'setHistoryIdx', value }), []);
   const [selectedIdx, setSelectedIdx] = useState(null);
 
   /* Tool state that syncs with selected annotation */
@@ -22,39 +51,16 @@ export default function usePdfHistory({ selectedIdxRef, currentPageRef, FONT_OPT
   const [textBold, setTextBold] = useState(false);
   const [textItalic, setTextItalic] = useState(false);
 
-  // Keep ref in sync with state
-  historyIdxRef.current = historyIdx;
-
   /* ================================================================
      History management
      ================================================================ */
   const pushHistory = useCallback((anns) => {
-    setHistory(prev => {
-      const truncated = prev.slice(0, historyIdxRef.current + 1);
-      const next = [...truncated, JSON.parse(JSON.stringify(anns))];
-      if (next.length > MAX_HISTORY) next.shift();
-      return next;
-    });
-    setHistoryIdx(prev => Math.min(prev + 1, MAX_HISTORY - 1));
+    dispatch({ type: 'checkpoint', value: anns });
   }, []);
 
-  const pendingAnnsRef = useRef(null);
-
   const setAnnsH = useCallback((updater) => {
-    setAnnotations(prev => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      pendingAnnsRef.current = next;
-      return next;
-    });
-    // Use queueMicrotask to ensure updater has run before we push history
-    queueMicrotask(() => {
-      if (!skipHistoryRef.current && pendingAnnsRef.current !== null) {
-        pushHistory(pendingAnnsRef.current);
-      }
-      skipHistoryRef.current = false;
-      pendingAnnsRef.current = null;
-    });
-  }, [pushHistory]);
+    dispatch({ type: 'edit', value: updater });
+  }, []);
 
   const syncAnnProp = useCallback((prop, val) => {
     const idx = selectedIdxRef.current;
@@ -102,10 +108,16 @@ export default function usePdfHistory({ selectedIdxRef, currentPageRef, FONT_OPT
     setAnnsH(prev => {
       const list = [...(prev[pg] || [])];
       if (list[idx] && list[idx].type === 'text') {
+        const detectedFont = list[idx].detectedFont || list[idx].fontFamily || DEFAULT_FONT_CSS;
         const resolved = val === 'auto'
-          ? (list[idx].detectedFont || '"Times New Roman", serif')
-          : (FONT_OPTIONS.find(f => f.id === val)?.css || '"Times New Roman", serif');
-        list[idx] = { ...list[idx], fontFamily: resolved };
+          ? detectedFont
+          : (FONT_OPTIONS.find(f => f.id === val)?.css || DEFAULT_FONT_CSS);
+        list[idx] = {
+          ...list[idx],
+          fontFamily: resolved,
+          detectedFont,
+          fontSelection: val,
+        };
       }
       return { ...prev, [pg]: list };
     });
@@ -136,28 +148,19 @@ export default function usePdfHistory({ selectedIdxRef, currentPageRef, FONT_OPT
   }, [setAnnsH, selectedIdxRef, currentPageRef]);
 
   const undo = useCallback(() => {
-    if (historyIdx <= 0) return;
-    const ni = historyIdx - 1;
-    setHistoryIdx(ni);
-    skipHistoryRef.current = true;
-    setAnnotations(JSON.parse(JSON.stringify(history[ni])));
+    dispatch({ type: 'undo' });
     setSelectedIdx(null);
-  }, [history, historyIdx]);
+  }, []);
 
   const redo = useCallback(() => {
-    if (historyIdx >= history.length - 1) return;
-    const ni = historyIdx + 1;
-    setHistoryIdx(ni);
-    skipHistoryRef.current = true;
-    setAnnotations(JSON.parse(JSON.stringify(history[ni])));
+    dispatch({ type: 'redo' });
     setSelectedIdx(null);
-  }, [history, historyIdx]);
+  }, []);
 
   return {
     annotations, setAnnotations,
     history, setHistory,
     historyIdx, setHistoryIdx,
-    skipHistoryRef,
     selectedIdx, setSelectedIdx,
     /* Sync tool state */
     strokeColor, setStrokeColor,

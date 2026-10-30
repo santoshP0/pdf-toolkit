@@ -1,5 +1,4 @@
 import { memo } from 'react';
-import ScrubbySlider from './ScrubbySlider';
 
 const ToolIcon = ({ id, size = 14, stroke = 'currentColor', sw = 1.8 }) => {
   const p = { xmlns: 'http://www.w3.org/2000/svg', width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke, strokeWidth: sw, strokeLinecap: 'round', strokeLinejoin: 'round' };
@@ -33,11 +32,29 @@ const TOOL_DEFS = [
 
 export { TOOL_DEFS };
 
+function ColorPicker({ label, value, onChange, transparent = false }) {
+  const displayValue = transparent ? 'None' : value.toUpperCase();
+  return (
+    <label className="pdf-editor-option pdf-editor-color-option" title={`${label}: ${displayValue}`}>
+      <span className="pdf-editor-option-label">{label}</span>
+      <span
+        className={`pdf-editor-color-swatch${transparent ? ' is-transparent' : ''}`}
+        style={transparent ? undefined : { background: value }}
+      />
+      <span className="pdf-editor-option-value">{displayValue}</span>
+      <input
+        className="pdf-editor-native-color"
+        type="color"
+        value={value.startsWith('#') ? value : '#ffffff'}
+        onChange={onChange}
+        aria-label={`${label} color`}
+      />
+    </label>
+  );
+}
+
 function PdfEditorToolStrip({
-  S,
   activeTool, setActiveTool,
-  toolStripWidth, setToolStripWidth, toolStripResizing,
-  hoveredTool, setHoveredTool,
   strokeColor, setStrokeColorSync,
   fillColor, setFillColorSync,
   strokeWidth, setStrokeWidthSync,
@@ -45,420 +62,155 @@ function PdfEditorToolStrip({
   textBold, setTextBoldSync,
   textItalic, setTextItalicSync,
   selectedFont, setSelectedFontSync,
-  selectedIdx, setSelectedIdx,
+  setSelectedIdx,
   editingText, setEditingText,
-  pageAnns,
-  isInteractingWithToolbarRef,
+  finishEditingText,
+  beginToolbarInteraction,
+  endToolbarInteraction,
   FONT_OPTIONS,
 }) {
-  const isWide = toolStripWidth > 85;
+  const hasColor = !['select', 'eraser'].includes(activeTool);
+  const hasStroke = ['draw', 'highlight', 'rect', 'circle', 'line', 'arrow'].includes(activeTool);
+  const hasFill = ['rect', 'circle'].includes(activeTool);
+  const isText = activeTool === 'text';
+  const currentTool = TOOL_DEFS.find(tool => tool.id === activeTool);
+
+  const updateTextSize = (value) => {
+    if (editingText) setEditingText(prev => ({ ...prev, matchedFontSize: value }));
+    setTextSizeSync(value);
+  };
 
   return (
-    <div
-      className="left-toolbar-controls"
-      onPointerDown={() => { isInteractingWithToolbarRef.current = true; }}
-      onPointerUp={() => { setTimeout(() => { isInteractingWithToolbarRef.current = false; }, 100); }}
-      style={S.toolStrip(toolStripWidth)}
-    >
-      {/* Resize handle on right edge */}
-      <div
-        style={{
-          position: 'absolute', top: 0, right: -3, width: 6, height: '100%',
-          cursor: 'col-resize', zIndex: 10,
-        }}
-        onPointerDown={e => {
-          e.preventDefault();
-          toolStripResizing.current = true;
-          const startX = e.clientX;
-          const startW = toolStripWidth;
-          const onMove = (me) => {
-            if (!toolStripResizing.current) return;
-            const newW = Math.max(44, Math.min(180, startW + (me.clientX - startX)));
-            setToolStripWidth(newW);
-          };
-          const onUp = () => {
-            toolStripResizing.current = false;
-            window.removeEventListener('pointermove', onMove);
-            window.removeEventListener('pointerup', onUp);
-          };
-          window.addEventListener('pointermove', onMove);
-          window.addEventListener('pointerup', onUp);
-        }}
-      />
-      {TOOL_DEFS.map((t, i) => {
-        const prevGroup = i > 0 ? TOOL_DEFS[i - 1].group : t.group;
-        return (
-          <div key={t.id} style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            {i > 0 && t.group !== prevGroup && <div style={{ ...S.toolDivider, width: isWide ? '85%' : 22 }} />}
-            <button
-              style={S.toolBtn(activeTool === t.id, toolStripWidth)}
-              onClick={() => { setActiveTool(t.id); setSelectedIdx(null); }}
-              onMouseEnter={() => setHoveredTool(t.id)}
-              onMouseLeave={() => setHoveredTool(null)}
-              title={`${t.label} (${t.shortcut})`}
-            >
-              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16 }}><ToolIcon id={t.id} size={16} stroke={activeTool === t.id ? 'var(--cat-edit)' : 'var(--sketch-text)'} /></span>
-              {isWide && (
-                <span style={{ fontSize: 11, fontWeight: 500, color: activeTool === t.id ? 'var(--cat-edit)' : 'var(--sketch-text)' }}>
-                  {t.label}
-                </span>
-              )}
-              {!isWide && hoveredTool === t.id && (
-                <span style={{ ...S.tooltip, opacity: 1 }}>
-                  {t.label} <span style={{ opacity: 0.5 }}>{t.shortcut}</span>
-                </span>
-              )}
-            </button>
-          </div>
-        );
-      })}
-
-      {/* Color/stroke controls — only for drawing tools */}
-      {!['select', 'eraser'].includes(activeTool) && <>
-      <div style={{ ...S.toolDivider, width: isWide ? '85%' : 22 }} />
-
-      {/* Border (Stroke) Color picker */}
-      <div style={{
-        display: 'flex',
-        flexDirection: isWide ? 'row' : 'column',
-        alignItems: 'center',
-        justifyContent: isWide ? 'flex-start' : 'center',
-        gap: 6,
-        padding: '4px 8px',
-        width: '100%',
-        boxSizing: 'border-box',
-      }}>
-        {isWide && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', width: 42, flexShrink: 0 }}>BORDER</span>}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          background: isWide ? 'var(--bg2)' : 'transparent',
-          padding: isWide ? '3px 6px' : 0,
-          borderRadius: 6,
-          border: isWide ? '1px solid var(--border)' : 'none',
-          cursor: 'pointer',
-          position: 'relative',
-          boxShadow: isWide ? 'inset 0 1px 2px rgba(0,0,0,0.04)' : 'none',
-        }} title="Select Border (Stroke) Color">
-          <div style={{
-            width: 16, height: 16,
-            borderRadius: '50%',
-            background: strokeColor,
-            border: '1.5px solid var(--border)',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-            flexShrink: 0,
-          }} />
-          {isWide && (
-            <span style={{
-              fontSize: 10,
-              fontFamily: 'var(--font-mono)',
-              color: 'var(--sketch-text)',
-              textTransform: 'uppercase',
-              userSelect: 'none',
-              letterSpacing: '0.02em',
-            }}>
-              {strokeColor}
-            </span>
-          )}
-          <input
-            type="color"
-            value={strokeColor.startsWith('#') ? strokeColor : '#1a1a1a'}
-            onChange={e => {
-              const val = e.target.value;
-              if (editingText) {
-                setEditingText(prev => ({ ...prev, matchedColor: val }));
-              }
-              setStrokeColorSync(val);
-            }}
-            style={{
-              position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-              border: 'none', padding: 0, opacity: 0, cursor: 'pointer',
-            }}
-          />
+    <>
+      <div className="pdf-editor-toolstrip">
+        <div className="pdf-editor-tools" role="toolbar" aria-label="PDF editing tools">
+        {TOOL_DEFS.map((tool, index) => {
+          const startsGroup = index > 0 && tool.group !== TOOL_DEFS[index - 1].group;
+          return (
+            <div className="pdf-editor-tool-wrap" key={tool.id}>
+              {startsGroup && <span className="pdf-editor-tool-separator" aria-hidden="true" />}
+              <button
+                className={`pdf-editor-tool-button${activeTool === tool.id ? ' is-active' : ''}`}
+                onClick={() => {
+                  finishEditingText?.();
+                  setActiveTool(tool.id);
+                  setSelectedIdx(null);
+                }}
+                title={`${tool.label} (${tool.shortcut})`}
+                aria-label={`${tool.label} tool`}
+                aria-pressed={activeTool === tool.id}
+              >
+                <ToolIcon id={tool.id} size={18} stroke="currentColor" />
+                <span>{tool.label}</span>
+                <kbd>{tool.shortcut}</kbd>
+              </button>
+            </div>
+          );
+        })}
         </div>
       </div>
 
-      {/* Fill Color picker (for shape tools or selected shapes) */}
-      {((['rect', 'circle'].includes(activeTool)) || (selectedIdx !== null && pageAnns[selectedIdx] && ['rect', 'circle'].includes(pageAnns[selectedIdx].type))) && (
-        <div style={{
-          display: 'flex',
-          flexDirection: isWide ? 'row' : 'column',
-          alignItems: 'center',
-          justifyContent: isWide ? 'flex-start' : 'center',
-          gap: 6,
-          padding: '4px 8px',
-          width: '100%',
-          boxSizing: 'border-box',
-          marginTop: 4,
-        }}>
-          {isWide && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', width: 42, flexShrink: 0 }}>FILL</span>}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            background: isWide ? 'var(--bg2)' : 'transparent',
-            padding: isWide ? '3px 6px' : 0,
-            borderRadius: 6,
-            border: isWide ? '1px solid var(--border)' : 'none',
-            cursor: 'pointer',
-            position: 'relative',
-            boxShadow: isWide ? 'inset 0 1px 2px rgba(0,0,0,0.04)' : 'none',
-          }} title="Select Fill Color (Double click to toggle transparent)">
-            <div style={{
-              width: 16, height: 16,
-              borderRadius: '50%',
-              background: fillColor === 'transparent' ? 'linear-gradient(135deg, #fff 45%, #ff3b30 45%, #ff3b30 55%, #fff 55%)' : fillColor,
-              border: '1.5px solid var(--border)',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-              flexShrink: 0,
-            }} onClick={(e) => {
-              if (fillColor !== 'transparent' && e.detail === 2) {
-                setFillColorSync('transparent');
-              }
-            }} />
-            {isWide && (
-              <span style={{
-                fontSize: 10,
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--sketch-text)',
-                textTransform: 'uppercase',
-                userSelect: 'none',
-                letterSpacing: '0.02em',
-              }}>
-                {fillColor === 'transparent' ? 'NONE' : fillColor}
-              </span>
-            )}
+      {hasColor && <div
+        className="pdf-editor-context-options"
+        aria-label={`${currentTool?.label || 'Tool'} options`}
+        onPointerDown={beginToolbarInteraction}
+        onPointerUp={endToolbarInteraction}
+        onPointerCancel={endToolbarInteraction}
+      >
+        <span className="pdf-editor-context-title">{currentTool?.label || 'Tool'} options</span>
+
+        <ColorPicker
+          label={isText ? 'Text' : activeTool === 'note' ? 'Note' : 'Stroke'}
+          value={editingText?.matchedColor || strokeColor}
+          onChange={(event) => {
+            const value = event.target.value;
+            if (editingText) setEditingText(prev => ({ ...prev, matchedColor: value }));
+            setStrokeColorSync(value);
+          }}
+        />
+
+        {hasFill && (
+          <>
+            <ColorPicker
+              label="Fill"
+              value={fillColor === 'transparent' ? '#ffffff' : fillColor}
+              transparent={fillColor === 'transparent'}
+              onChange={(event) => setFillColorSync(event.target.value)}
+            />
+            <button
+              className={`pdf-editor-option-button${fillColor === 'transparent' ? ' is-active' : ''}`}
+              onClick={() => setFillColorSync(fillColor === 'transparent' ? '#ffffff' : 'transparent')}
+              title={fillColor === 'transparent' ? 'Use a solid fill' : 'Remove fill'}
+            >
+              {fillColor === 'transparent' ? 'Add fill' : 'No fill'}
+            </button>
+          </>
+        )}
+
+        {hasStroke && (
+          <label className="pdf-editor-option pdf-editor-range-option">
+            <span className="pdf-editor-option-label">{activeTool === 'highlight' ? 'Size' : 'Width'}</span>
             <input
-              type="color"
-              value={fillColor.startsWith('#') ? fillColor : '#ffffff'}
-              onChange={e => {
-                setFillColorSync(e.target.value);
-              }}
-              style={{
-                position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-                border: 'none', padding: 0, opacity: 0, cursor: 'pointer',
-              }}
-            />
-          </div>
-          <button
-            onClick={() => setFillColorSync(fillColor === 'transparent' ? '#ffffff' : 'transparent')}
-            style={{
-              background: 'none', border: '1px solid var(--border)',
-              borderRadius: 4, padding: '2px 4px', fontSize: 8, cursor: 'pointer',
-              color: 'var(--sketch-text)',
-              width: isWide ? 'auto' : 22,
-              height: 18,
-              display: 'flex', alignItems: 'center', justifyContent: 'center'
-            }}
-            title={fillColor === 'transparent' ? "Set solid fill" : "Set no fill"}
-          >
-            {fillColor === 'transparent' ? "Solid" : "None"}
-          </button>
-        </div>
-      )}
-
-      </>}
-
-      {['draw', 'highlight', 'rect', 'circle', 'line', 'arrow'].includes(activeTool) && (
-        <>
-          <div style={{ ...S.toolDivider, width: isWide ? '85%' : 22 }} />
-          <div style={{
-            display: 'flex',
-            flexDirection: isWide ? 'row' : 'column',
-            alignItems: 'center',
-            justifyContent: isWide ? 'flex-start' : 'center',
-            gap: 4,
-            width: '100%',
-            padding: '4px 8px',
-            boxSizing: 'border-box',
-          }}>
-            <ScrubbySlider
-              label={isWide ? "PEN:" : "P:"}
+              type="range"
+              min="1"
+              max={activeTool === 'highlight' ? '40' : '16'}
               value={strokeWidth}
-              min={1}
-              max={16}
-              onChange={(val) => setStrokeWidthSync(val)}
-              labelStyle={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', width: isWide ? 42 : 'auto', flexShrink: 0 }}
-              style={{ display: 'inline-flex', padding: '2px 0' }}
+              onChange={(event) => setStrokeWidthSync(Number(event.target.value))}
             />
-            {isWide && (
-              <input type="range" min={1} max={16} value={strokeWidth}
-                onChange={e => setStrokeWidthSync(Number(e.target.value))}
-                style={{
-                  width: '40%',
-                  height: 18,
-                  accentColor: 'var(--cat-edit)',
-                  cursor: 'pointer',
-                }}
-                title="Pen Stroke Size"
-              />
-            )}
-          </div>
-        </>
-      )}
+            <span className="pdf-editor-option-value">{strokeWidth}px</span>
+          </label>
+        )}
 
-      {activeTool === 'text' && (
-        <>
-          <div style={{ ...S.toolDivider, width: isWide ? '85%' : 22 }} />
-          {/* Text Size */}
-          <div style={{
-            display: 'flex',
-            flexDirection: isWide ? 'row' : 'column',
-            alignItems: 'center',
-            justifyContent: isWide ? 'flex-start' : 'center',
-            gap: 4,
-            width: '100%',
-            padding: '4px 8px',
-            boxSizing: 'border-box',
-          }}>
-            <ScrubbySlider
-              label={isWide ? "SIZE:" : "S:"}
-              value={textSize}
-              min={8}
-              max={72}
-              onChange={(val) => {
-                if (editingText) {
-                  setEditingText(prev => ({ ...prev, matchedFontSize: val }));
-                }
-                setTextSizeSync(val);
-              }}
-              labelStyle={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', width: isWide ? 42 : 'auto', flexShrink: 0 }}
-              style={{ display: 'inline-flex', padding: '2px 0' }}
-            />
-            {isWide && (
-              <input type="range" min={8} max={72} value={textSize}
-                onChange={e => {
-                  const val = Number(e.target.value);
-                  if (editingText) {
-                    setEditingText(prev => ({ ...prev, matchedFontSize: val }));
-                  }
-                  setTextSizeSync(val);
-                }}
-                style={{
-                  width: '40%',
-                  height: 18,
-                  accentColor: 'var(--cat-edit)',
-                  cursor: 'pointer',
-                }}
-                title="Font Size"
-              />
-            )}
-          </div>
-
-          {/* Font Family */}
-          <div style={{
-            display: 'flex',
-            flexDirection: isWide ? 'row' : 'column',
-            alignItems: 'center',
-            justifyContent: isWide ? 'flex-start' : 'center',
-            gap: 4,
-            padding: '4px 8px',
-            width: '100%',
-            boxSizing: 'border-box',
-            marginTop: 2,
-          }}>
-            {isWide && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', width: 42, flexShrink: 0 }}>FONT</span>}
-            <select value={selectedFont}
-              onChange={e => {
-                const val = e.target.value;
-                setSelectedFontSync(val);
-              }}
-              style={{
-                flex: isWide ? 1 : undefined,
-                width: isWide ? 'auto' : 38,
-                fontSize: 8, padding: '2px 1px',
-                border: '1px solid var(--border)', borderRadius: 3,
-                background: 'var(--surface)', color: 'var(--sketch-text)',
-                fontFamily: 'var(--font-sans)', cursor: 'pointer',
-                textOverflow: 'ellipsis',
-              }}>
-              {FONT_OPTIONS.map(f => {
-                let label = f.label;
-                if (f.id === 'auto' && editingText) {
-                  const resolved = editingText.matchedFont || '"Times New Roman", serif';
-                  const isSerif = /times|georgia|garamond|palatino|serif/i.test(resolved) && !/sans/i.test(resolved);
-                  const isMono = /courier|mono/i.test(resolved);
-                  const displayFamily = isMono ? 'Mono' : (isSerif ? 'Serif' : 'Sans');
-                  label = `Auto (${displayFamily})`;
-                }
-                return (
-                  <option key={f.id} value={f.id} style={{ fontFamily: f.css !== 'auto' ? f.css : undefined }}>
-                    {label}
+        {isText && (
+          <>
+            <label className="pdf-editor-option pdf-editor-select-option">
+              <span className="pdf-editor-option-label">Font</span>
+              <select value={selectedFont} onChange={(event) => setSelectedFontSync(event.target.value)}>
+                {FONT_OPTIONS.map(font => (
+                  <option key={font.id} value={font.id}>
+                    {font.id === 'auto' && editingText?.detectedFontLabel
+                      ? `Auto (${editingText.detectedFontLabel})`
+                      : font.label}
                   </option>
-                );
-              })}
-            </select>
-          </div>
+                ))}
+              </select>
+            </label>
+            <label className="pdf-editor-option pdf-editor-range-option">
+              <span className="pdf-editor-option-label">Size</span>
+              <input
+                type="range"
+                min="8"
+                max="72"
+                value={editingText?.matchedFontSize || textSize}
+                onChange={(event) => updateTextSize(Number(event.target.value))}
+              />
+              <span className="pdf-editor-option-value">{editingText?.matchedFontSize || textSize}px</span>
+            </label>
+            <button
+              className={`pdf-editor-format-button${(editingText ? editingText.matchedBold : textBold) ? ' is-active' : ''}`}
+              onClick={() => {
+                const value = !(editingText ? editingText.matchedBold : textBold);
+                if (editingText) setEditingText(prev => ({ ...prev, matchedBold: value }));
+                setTextBoldSync(value);
+              }}
+              aria-label="Bold"
+              aria-pressed={Boolean(editingText ? editingText.matchedBold : textBold)}
+            >B</button>
+            <button
+              className={`pdf-editor-format-button is-italic${(editingText ? editingText.matchedItalic : textItalic) ? ' is-active' : ''}`}
+              onClick={() => {
+                const value = !(editingText ? editingText.matchedItalic : textItalic);
+                if (editingText) setEditingText(prev => ({ ...prev, matchedItalic: value }));
+                setTextItalicSync(value);
+              }}
+              aria-label="Italic"
+              aria-pressed={Boolean(editingText ? editingText.matchedItalic : textItalic)}
+            >I</button>
+          </>
+        )}
 
-          {/* Bold & Italic Toggles */}
-          <div style={{
-            display: 'flex',
-            flexDirection: isWide ? 'row' : 'column',
-            gap: 4,
-            justifyContent: isWide ? 'flex-start' : 'center',
-            alignItems: 'center',
-            width: '100%',
-            padding: '4px 8px',
-            boxSizing: 'border-box',
-            marginTop: 2,
-          }}>
-            {isWide && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)', width: 42, flexShrink: 0 }}>STYLE</span>}
-            <div style={{ display: 'flex', gap: 4 }}>
-              <button
-                onClick={() => {
-                  const nextVal = !(editingText ? editingText.matchedBold : textBold);
-                  if (editingText) {
-                    setEditingText(prev => ({ ...prev, matchedBold: nextVal }));
-                  }
-                  setTextBoldSync(nextVal);
-                }}
-                style={{
-                  width: 24, height: 24,
-                  borderRadius: 4,
-                  border: '1px solid var(--border)',
-                  background: (editingText ? editingText.matchedBold : textBold) ? 'var(--cat-edit-bg)' : 'var(--surface)',
-                  color: (editingText ? editingText.matchedBold : textBold) ? 'var(--cat-edit)' : 'var(--sketch-text)',
-                  fontFamily: 'var(--font-sans)',
-                  fontWeight: 'bold',
-                  fontSize: 10,
-                  cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-                title="Bold"
-              >
-                B
-              </button>
-              <button
-                onClick={() => {
-                  const nextVal = !(editingText ? editingText.matchedItalic : textItalic);
-                  if (editingText) {
-                    setEditingText(prev => ({ ...prev, matchedItalic: nextVal }));
-                  }
-                  setTextItalicSync(nextVal);
-                }}
-                style={{
-                  width: 24, height: 24,
-                  borderRadius: 4,
-                  border: '1px solid var(--border)',
-                  background: (editingText ? editingText.matchedItalic : textItalic) ? 'var(--cat-edit-bg)' : 'var(--surface)',
-                  color: (editingText ? editingText.matchedItalic : textItalic) ? 'var(--cat-edit)' : 'var(--sketch-text)',
-                  fontFamily: 'var(--font-sans)',
-                  fontStyle: 'italic',
-                  fontSize: 10,
-                  cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-                title="Italic"
-              >
-                I
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-
-    </div>
+      </div>}
+    </>
   );
 }
 

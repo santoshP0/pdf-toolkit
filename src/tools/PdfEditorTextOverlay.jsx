@@ -1,63 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import ScrubbySlider from './ScrubbySlider';
-
-// Clean HTML to our format (<b>, <i>, newlines)
-function cleanHtmlToTags(html) {
-  if (!html || html === '<br>' || html === '<div><br></div>') return '';
-
-  // Convert &nbsp; and \u00a0 to normal spaces
-  const sanitizedHtml = html
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/\u00a0/g, ' ');
-
-  const temp = document.createElement('div');
-  temp.innerHTML = sanitizedHtml;
-
-  let result = '';
-
-  function traverse(node, isBold = false, isItalic = false) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      let val = node.nodeValue;
-      if (isBold) val = `<b>${val}</b>`;
-      if (isItalic) val = `<i>${val}</i>`;
-      result += val;
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      const tag = node.nodeName.toLowerCase();
-      
-      const nodeBold = isBold || tag === 'b' || tag === 'strong' || node.style.fontWeight === 'bold' || parseInt(node.style.fontWeight, 10) >= 700;
-      const nodeItalic = isItalic || tag === 'i' || tag === 'em' || node.style.fontStyle === 'italic';
-
-      if (tag === 'br') {
-        result += '\n';
-      } else if (tag === 'div' || tag === 'p') {
-        if (result && !result.endsWith('\n')) {
-          result += '\n';
-        }
-        for (let child of node.childNodes) {
-          traverse(child, nodeBold, nodeItalic);
-        }
-      } else {
-        for (let child of node.childNodes) {
-          traverse(child, nodeBold, nodeItalic);
-        }
-      }
-    }
-  }
-
-  for (let child of temp.childNodes) {
-    traverse(child);
-  }
-
-  let finalStr = result
-    .replace(/<\/b>(\s*)<b>/gi, '$1')
-    .replace(/<\/i>(\s*)<i>/gi, '$1');
-
-  finalStr = finalStr
-    .replace(/<b><\/b>/gi, '')
-    .replace(/<i><\/i>/gi, '');
-
-  return finalStr;
-}
+import {
+  cleanHtmlToTags,
+  richTextToHtml,
+  DEFAULT_FONT_CSS,
+  NOTE_MAX_WIDTH,
+  NOTE_MIN_HEIGHT,
+  NOTE_MIN_WIDTH,
+} from './pdf-editor/helpers';
 
 export default function PdfEditorTextOverlay({
   editingText,
@@ -71,7 +21,8 @@ export default function PdfEditorTextOverlay({
   commitText,
   setGuides,
   isInteractingWithToolbarRef,
-  handleEditorFormat,
+  beginToolbarInteraction,
+  endToolbarInteraction,
   FONT_OPTIONS,
   selectedFont,
   setSelectedFont,
@@ -80,16 +31,9 @@ export default function PdfEditorTextOverlay({
   const [isItalicActive, setIsItalicActive] = useState(false);
 
   // Store the initial HTML when editingText is first set or changes
-  const initialHTML = useRef(null);
-  const currentEditKey = `${editingText?.x}-${editingText?.y}-${editingText?.editIdx}`;
+  const currentEditKey = editingText?.sessionId
+    || `${editingText?.x}-${editingText?.y}-${editingText?.editIdx}`;
   const prevEditKey = useRef('');
-  const shouldSetHTML = useRef(false);
-
-  if (editingText && currentEditKey !== prevEditKey.current) {
-    initialHTML.current = (editingText.value || '').replace(/\n/g, '<br />');
-    prevEditKey.current = currentEditKey;
-    shouldSetHTML.current = true;
-  }
 
   const updateActiveStyles = () => {
     setIsBoldActive(document.queryCommandState('bold'));
@@ -111,14 +55,36 @@ export default function PdfEditorTextOverlay({
   if (!editingText) return null;
 
   const isPdfText = !!editingText.pdfTextItem;
+  const isNote = !!editingText.note;
   const fs = editingText.matchedFontSize || textSize;
   const lineW = isPdfText ? editingText.pdfTextItem.width + 8 : undefined;
+  const noteMaxWidth = Math.min(
+    NOTE_MAX_WIDTH,
+    Math.max(40, pageSize.width - (editingText.x - 6) - 4),
+  );
   
+  const detectedFontCSS = editingText.detectedFont || editingText.matchedFont || DEFAULT_FONT_CSS;
   const resolvedFontCSS = selectedFont === 'auto'
-    ? (editingText.matchedFont || '"Times New Roman", serif')
-    : (FONT_OPTIONS.find(f => f.id === selectedFont)?.css || '"Times New Roman", serif');
+    ? detectedFontCSS
+    : (FONT_OPTIONS.find(f => f.id === selectedFont)?.css || DEFAULT_FONT_CSS);
     
   const floatingBarY = editingText.y - fs - 42;
+
+  const sizeEditor = (element) => {
+    if (!element || isPdfText) return;
+    const maxWidth = isNote ? noteMaxWidth : pageSize.width - editingText.x - 4;
+    const minWidth = isNote ? Math.min(NOTE_MIN_WIDTH, maxWidth) : 60;
+    const minHeight = isNote ? Math.max(NOTE_MIN_HEIGHT, fs * 1.25 + 16) : 0;
+    element.style.width = 'auto';
+    element.style.width = `${Math.max(minWidth, Math.min(element.scrollWidth + (isNote ? 2 : 10), maxWidth))}px`;
+    element.style.height = 'auto';
+    element.style.height = `${Math.max(minHeight, element.scrollHeight)}px`;
+    if (isNote) {
+      const preferredTop = editingText.y - fs - 6;
+      const maxTop = Math.max(4, pageSize.height - element.offsetHeight - 4);
+      element.style.top = `${Math.max(4, Math.min(preferredTop, maxTop))}px`;
+    }
+  };
 
   return (
     <>
@@ -130,13 +96,26 @@ export default function PdfEditorTextOverlay({
           pointer-events: none;
           display: block;
         }
+        .pdf-editor-contenteditable.is-note::after {
+          content: '';
+          position: absolute;
+          right: -1px;
+          bottom: -1px;
+          width: 10px;
+          height: 10px;
+          background: linear-gradient(135deg, #e0c94a 0 49%, #fffdf0 50% 100%);
+          border-left: 1px solid rgba(138, 111, 0, 0.18);
+          border-top: 1px solid rgba(138, 111, 0, 0.18);
+          pointer-events: none;
+        }
       `}</style>
 
       {/* Floating formatting bar */}
       <div
         className="formatting-bar"
-        onPointerDown={() => { isInteractingWithToolbarRef.current = true; }}
-        onPointerUp={() => { setTimeout(() => { isInteractingWithToolbarRef.current = false; }, 100); }}
+        onPointerDown={beginToolbarInteraction}
+        onPointerUp={endToolbarInteraction}
+        onPointerCancel={endToolbarInteraction}
         style={{
           position: 'absolute',
           left: editingText.x,
@@ -158,12 +137,12 @@ export default function PdfEditorTextOverlay({
           value={selectedFont}
           onChange={e => {
             const val = e.target.value;
+            const resolved = val === 'auto'
+              ? (editingText.detectedFont || DEFAULT_FONT_CSS)
+              : (FONT_OPTIONS.find(f => f.id === val)?.css || DEFAULT_FONT_CSS);
             setSelectedFont(val);
-            setEditingText(prev => ({ ...prev, matchedFont: val }));
+            setEditingText(prev => ({ ...prev, matchedFont: resolved }));
             if (textInputRef.current) {
-              const resolved = val === 'auto'
-                ? (editingText.matchedFont || '"Times New Roman", serif')
-                : (FONT_OPTIONS.find(f => f.id === val)?.css || '"Times New Roman", serif');
               textInputRef.current.style.fontFamily = resolved;
             }
           }}
@@ -178,11 +157,11 @@ export default function PdfEditorTextOverlay({
           {FONT_OPTIONS.map(f => {
             let label = f.label;
             if (f.id === 'auto') {
-              const resolved = editingText.matchedFont || '"Times New Roman", serif';
+              const resolved = detectedFontCSS;
               const isSerif = /times|georgia|garamond|palatino|serif/i.test(resolved) && !/sans/i.test(resolved);
-              const isMono = /courier|mono/i.test(resolved);
+              const isMono = /courier|consolas|menlo|monaco|mono/i.test(resolved);
               const displayFamily = isMono ? 'Mono' : (isSerif ? 'Serif' : 'Sans');
-              label = `Auto (${displayFamily})`;
+              label = `Auto (${editingText.detectedFontLabel || displayFamily})`;
             }
             return (
               <option key={f.id} value={f.id}>
@@ -305,19 +284,19 @@ export default function PdfEditorTextOverlay({
         ref={el => {
           textInputRef.current = el;
           if (el) {
-            if (shouldSetHTML.current) {
-              el.innerHTML = initialHTML.current;
-              shouldSetHTML.current = false;
+            const isNewSession = prevEditKey.current !== currentEditKey;
+            if (isNewSession) {
+              prevEditKey.current = currentEditKey;
+              el.innerHTML = richTextToHtml(editingText.value);
+              requestAnimationFrame(() => {
+                if (el === textInputRef.current) el.focus({ preventScroll: true });
+              });
             }
             if (!isPdfText) {
-              // Auto-grow height & width immediately
-              el.style.height = 'auto';
-              el.style.height = el.scrollHeight + 'px';
-              el.style.width = 'auto';
-              el.style.width = Math.max(60, Math.min(el.scrollWidth + 10, pageSize.width - editingText.x - 4)) + 'px';
+              sizeEditor(el);
             }
 
-            if (editingText?.clickX != null) {
+            if (isNewSession && editingText?.clickX != null) {
               // Estimate cursor position from click X coordinate
               const text = editingText.value || '';
               if (text.length > 0) {
@@ -337,7 +316,6 @@ export default function PdfEditorTextOverlay({
                     break;
                   }
                 }
-                editingText.clickX = null;
                 requestAnimationFrame(() => {
                   if (el && el === textInputRef.current) {
                     const range = document.createRange();
@@ -371,45 +349,48 @@ export default function PdfEditorTextOverlay({
                     }
                   }
                 });
-              } else {
-                editingText.clickX = null;
               }
             }
           }
         }}
-        key={`te-${editingText.x}-${editingText.y}-${editingText.editIdx}`}
+        key={`te-${currentEditKey}`}
+        autoFocus
         contentEditable={true}
+        role="textbox"
+        aria-label={isNote ? 'Note text' : 'Annotation text'}
+        aria-multiline={!isPdfText}
+        onPaste={event => {
+          event.preventDefault();
+          document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));
+        }}
         suppressContentEditableWarning={true}
         onInput={e => {
           updateActiveStyles();
           
-          if (!isPdfText) {
-            e.target.style.height = 'auto';
-            e.target.style.height = e.target.scrollHeight + 'px';
-            e.target.style.width = 'auto';
-            e.target.style.width = Math.max(60, Math.min(e.target.scrollWidth + 10, pageSize.width - editingText.x - 4)) + 'px';
-          }
+          sizeEditor(e.currentTarget);
         }}
         placeholder="Type..."
-        className="pdf-editor-contenteditable"
+        className={`pdf-editor-contenteditable${isNote ? ' is-note' : ''}`}
         style={{
           position: 'absolute',
-          left: editingText.x,
-          top: editingText.y - fs,
+          left: isNote ? editingText.x - 6 : editingText.x,
+          top: isNote ? editingText.y - fs - 6 : editingText.y - fs,
           fontSize: fs,
           fontFamily: resolvedFontCSS,
           fontWeight: editingText.matchedBold ? 700 : (editingText.matchedWeight || 400),
           fontStyle: editingText.matchedItalic ? 'italic' : 'normal',
           color: editingText.matchedColor || strokeColor,
-          background: isPdfText ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.06)',
-          border: 'none',
-          borderBottom: '2px solid var(--cat-edit)',
-          borderRadius: 0,
-          padding: '2px 3px',
+          background: isNote ? '#fff9c4' : isPdfText ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.06)',
+          border: isNote ? '1px solid #e0c94a' : 'none',
+          borderBottom: isNote ? '1px solid #e0c94a' : '2px solid var(--cat-edit)',
+          borderRadius: isNote ? 4 : 0,
+          padding: isNote ? '5px 7px 11px 5px' : '2px 3px',
           outline: 'none',
           width: isPdfText ? Math.min(lineW, pageSize.width - editingText.x - 4) : undefined,
-          minWidth: isPdfText ? undefined : 60,
-          maxWidth: pageSize.width - editingText.x - 4,
+          minWidth: isPdfText ? undefined : isNote ? Math.min(NOTE_MIN_WIDTH, noteMaxWidth) : 60,
+          minHeight: isNote ? Math.max(NOTE_MIN_HEIGHT, fs * 1.25 + 16) : undefined,
+          maxWidth: isNote ? noteMaxWidth : pageSize.width - editingText.x - 4,
+          boxSizing: 'border-box',
           resize: 'none',
           overflowX: isPdfText ? 'auto' : 'hidden',
           overflowY: 'hidden',
@@ -418,7 +399,9 @@ export default function PdfEditorTextOverlay({
           whiteSpace: isPdfText ? 'nowrap' : 'pre-wrap',
           wordBreak: isPdfText ? 'normal' : 'break-word',
           height: isPdfText ? Math.round(fs * 1.25 + 8) : undefined,
-          boxShadow: isPdfText
+          boxShadow: isNote
+            ? '0 0 0 2px rgba(106,76,147,0.24), 0 4px 10px rgba(0,0,0,0.12)'
+            : isPdfText
             ? '0 0 0 1px rgba(106,76,147,0.2), 0 2px 8px rgba(0,0,0,0.08)'
             : 'none',
           pointerEvents: 'auto',
@@ -442,7 +425,6 @@ export default function PdfEditorTextOverlay({
           const cleanVal = cleanHtmlToTags(html);
           setTimeout(() => {
             if (isInteractingWithToolbarRef.current) {
-              textInputRef.current?.focus();
               return;
             }
             if (document.activeElement !== textInputRef.current) {

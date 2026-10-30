@@ -3,15 +3,30 @@
  * Shared by every tool that renders or reads page content, so the worker
  * URL lives in a single place.
  */
+import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
 let pdfjsPromise = null;
 
 export function getPdfjsLib() {
   if (!pdfjsPromise) {
     pdfjsPromise = import('pdfjs-dist').then(mod => {
-      if (!mod.GlobalWorkerOptions.workerSrc) {
-        mod.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${mod.version}/build/pdf.worker.min.mjs`;
-      }
-      return mod;
+      mod.GlobalWorkerOptions.workerSrc = workerUrl;
+      const base = `${import.meta.env.BASE_URL}runtime/pdfjs`;
+      return {
+        ...mod,
+        getDocument(options) {
+          return mod.getDocument({
+            cMapUrl: `${base}/cmaps/`, cMapPacked: true,
+            standardFontDataUrl: `${base}/standard_fonts/`,
+            wasmUrl: `${base}/wasm/`, iccUrl: `${base}/iccs/`,
+            isEvalSupported: false,
+            ...options,
+          });
+        },
+      };
+    }).catch(error => {
+      pdfjsPromise = null;
+      throw error;
     });
   }
   return pdfjsPromise;

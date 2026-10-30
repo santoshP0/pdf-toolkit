@@ -4,7 +4,6 @@
 
 ![Built with React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react)
 ![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=flat-square&logo=vite)
-![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![100% Local](https://img.shields.io/badge/privacy-100%25%20local-brightgreen?style=flat-square)
 
 ---
@@ -51,27 +50,26 @@
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 18+ or [Bun](https://bun.sh/) 1.0+
+- [Node.js](https://nodejs.org/) 22.12+ and npm
 
 ### Install & run
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/pdf-toolkit.git
+git clone https://github.com/santoshP0/pdf-toolkit.git
 cd pdf-toolkit
 
-# Install dependencies (Bun)
-bun install
+# Install the locked dependencies
+npm ci
 
 # Start the dev server
-bun run dev
+npm run dev
 ```
 
-Or with npm:
+Run the release checks:
 
 ```bash
-npm install
-npm run dev
+npm run check
 ```
 
 Then open [http://localhost:5173](http://localhost:5173) in your browser.
@@ -85,7 +83,15 @@ Every operation runs **entirely in your browser** using WebAssembly and JavaScri
 
 - Never uploaded to any server
 - Never sent over the network
-- Processed in-memory and immediately discarded after download
+- Processed locally. Most tools use temporary memory; the editor saves a resumable session in your browser for up to 30 days. Expired sessions are removed when the site next opens the session. Exporting or opening a new file clears the editor session.
+
+Fonts, the PDF worker, PDF image decoders, and English OCR assets are served from the same site. No analytics or file-upload service is included.
+
+## Production release
+
+See [RELEASE.md](RELEASE.md) for Cloudflare Pages settings, verification steps, rollback guidance, and current PDF editing limits. The GitHub workflow runs lint, regression tests, the production build, and the security audit.
+
+The build output is `dist/`. Runtime PDF and OCR assets are generated from the locked npm dependencies during `npm run build`.
 
 ---
 
@@ -101,6 +107,6 @@ Pull requests are welcome! For larger changes, please open an issue first to dis
 
 ---
 
-## 📄 License
+## Third-party software
 
-[MIT](LICENSE) — free to use, modify and distribute.
+Quill uses open-source PDF, OCR, font, and interface libraries. Their licenses are retained with the deployed runtime assets where required. This repository does not currently include a license grant for Quill's own source.

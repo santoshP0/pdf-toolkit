@@ -1,22 +1,15 @@
+import { storage } from '../shared/storage';
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { savePDFToDB, loadPDFFromDB, clearPDFFromDB } from '../PdfEditorDB';
-import { detectFontFamily, detectFontWeight } from './helpers';
+import {
+  savePDFToDB, loadPDFFromDB, clearPDFFromDB,
+  clearPDFEditorLocalStorage, PDF_EDITOR_UPDATED_AT_KEY,
+} from '../PdfEditorDB';
+import { compactStoredNoteCards, detectFontMatch, detectFontWeight } from './helpers';
 
 /* ================================================================
    PDF.js dynamic loader
    ================================================================ */
-let _pdfjsCache = null;
-function getPdfjsLib() {
-  if (_pdfjsCache) return Promise.resolve(_pdfjsCache);
-  return import('pdfjs-dist').then(mod => {
-    if (!mod.GlobalWorkerOptions.workerSrc) {
-      mod.GlobalWorkerOptions.workerSrc =
-        `https://unpkg.com/pdfjs-dist@${mod.version}/build/pdf.worker.min.mjs`;
-    }
-    _pdfjsCache = mod;
-    return mod;
-  });
-}
+import { getPdfjsLib } from '../shared/pdfjs';
 
 /* ================================================================
    usePdfDocument hook
@@ -34,6 +27,7 @@ export default function usePdfDocument({ canvasRef, setAnnotations, setHistory, 
   const [renderScale] = useState(1.5);
   const [loading, setLoading] = useState(false);
   const [pageReady, setPageReady] = useState(false);
+  const [documentError, setDocumentError] = useState('');
   const [pdfTextItems, setPdfTextItems] = useState([]);
   const [thumbnails, setThumbnails] = useState({});
   const [showThumbs, setShowThumbs] = useState(false);
@@ -50,16 +44,18 @@ export default function usePdfDocument({ canvasRef, setAnnotations, setHistory, 
       if (f.type !== 'application/pdf') return;
       name = f.name;
     }
-    setFile({ name });
+    setFile({ name, size: f?.size ?? savedBytes?.byteLength });
     setLoading(true);
-    setAnnotations(initialAnns || {});
+    setDocumentError('');
+    const restoredAnnotations = compactStoredNoteCards(initialAnns || {});
+    setAnnotations(restoredAnnotations);
     setCurrentPage(initialPage || 1);
     setSelectedIdx(null);
     setHistory([]);
     setHistoryIdx(-1);
     setThumbnails({});
-    if (initialZoom) {
-      setZoom(initialZoom);
+    if (Number.isFinite(initialZoom)) {
+      setZoom(Math.min(4, Math.max(0.25, initialZoom)));
     }
     try {
       const pdfjsLib = await getPdfjsLib();
@@ -71,16 +67,21 @@ export default function usePdfDocument({ canvasRef, setAnnotations, setHistory, 
       pdfBytesRef.current = bytes;
       setPdfBytes(bytes);
 
-      // Save PDF to DB asynchronously
-      savePDFToDB(bytes, name);
-
       const clonedU8 = new Uint8Array(bytes.slice(0));
       const doc = await pdfjsLib.getDocument({ data: clonedU8 }).promise;
       setPdfDoc(doc);
       setTotalPages(doc.numPages);
-      pushHistory(initialAnns || {});
+      setCurrentPage(Number.isInteger(initialPage) ? Math.min(doc.numPages, Math.max(1, initialPage)) : 1);
+      pushHistory(restoredAnnotations);
+      // Persist only after a valid PDF has opened successfully.
+      savePDFToDB(bytes, name);
+      storage.setItem(PDF_EDITOR_UPDATED_AT_KEY, Date.now().toString());
     } catch (err) {
       alert('Error loading PDF: ' + err.message);
+      setFile(null);
+      setPdfDoc(null);
+      setPdfBytes(null);
+      pdfBytesRef.current = null;
     } finally {
       setLoading(false);
     }
@@ -94,9 +95,9 @@ export default function usePdfDocument({ canvasRef, setAnnotations, setHistory, 
         const saved = await loadPDFFromDB();
         if (cancelled) return;
         if (saved && saved.bytes && saved.name) {
-          const savedPage = localStorage.getItem('pdf_editor_current_page');
-          const savedAnns = localStorage.getItem('pdf_editor_annotations');
-          const savedZoom = localStorage.getItem('pdf_editor_zoom');
+          const savedPage = storage.getItem('pdf_editor_current_page');
+          const savedAnns = storage.getItem('pdf_editor_annotations');
+          const savedZoom = storage.getItem('pdf_editor_zoom');
 
           let initialPage = 1;
           if (savedPage) initialPage = parseInt(savedPage, 10);
@@ -137,7 +138,9 @@ export default function usePdfDocument({ canvasRef, setAnnotations, setHistory, 
       if (!canvas || cancelled) return;
       // Use offscreen canvas to render, then copy — avoids flicker and
       // prevents concurrent renders from corrupting the visible canvas
-      const off = new OffscreenCanvas(vp.width, vp.height);
+      const off = document.createElement('canvas');
+      off.width = vp.width;
+      off.height = vp.height;
       await page.render({ canvasContext: off.getContext('2d'), viewport: vp }).promise;
       if (cancelled || !canvasRef.current) return;
       // Commit to visible canvas only after render completes
@@ -146,7 +149,10 @@ export default function usePdfDocument({ canvasRef, setAnnotations, setHistory, 
       canvas.getContext('2d').drawImage(off, 0, 0);
       setPageSize({ width: vp.width, height: vp.height });
       setPageReady(true);
-    })();
+      setDocumentError('');
+    })().catch(error => {
+      if (!cancelled) setDocumentError(`This page could not be rendered: ${error.message}`);
+    });
     return () => { cancelled = true; };
   }, [pdfDoc, currentPage, renderScale, canvasRef]);
 
@@ -154,7 +160,7 @@ export default function usePdfDocument({ canvasRef, setAnnotations, setHistory, 
      Extract text items from PDF for click-to-edit + alignment
      ================================================================ */
   useEffect(() => {
-    if (!pdfDoc) { setPdfTextItems([]); return; }
+    if (!pdfDoc) return;
     let cancelled = false;
     (async () => {
       try {
@@ -163,11 +169,41 @@ export default function usePdfDocument({ canvasRef, setAnnotations, setHistory, 
         const tc = await page.getTextContent();
         if (cancelled) return;
         const styles = tc.styles || {};
+        const measureContext = document.createElement('canvas').getContext('2d');
+        const fontMetadata = new Map();
+
+        const getFontMetadata = (fontName) => {
+          if (!fontName) return {};
+          if (fontMetadata.has(fontName)) return fontMetadata.get(fontName);
+          let metadata = {};
+          try {
+            // PDF.js resolves embedded/system font objects while extracting
+            // text. This mirrors the family it uses to paint the PDF, while
+            // remaining optional if a future PDF.js version hides the object.
+            if (page.commonObjs?.has?.(fontName)) {
+              const fontObj = page.commonObjs.get(fontName);
+              metadata = {
+                exactCss: fontObj.systemFontInfo?.css || '',
+                loadedName: fontObj.loadedName || fontName,
+                cssFontFamily: fontObj.cssFontInfo?.fontFamily || '',
+                names: [fontObj.name, fontObj.systemFontInfo?.baseFontName].filter(Boolean),
+                bold: Boolean(fontObj.bold || fontObj.black),
+                italic: Boolean(fontObj.italic),
+                vertical: Boolean(fontObj.vertical),
+              };
+            }
+          } catch {
+            // Public text metadata below remains a safe fallback.
+          }
+          fontMetadata.set(fontName, metadata);
+          return metadata;
+        };
 
         // First pass: convert raw items to scaled coordinates
         const rawItems = tc.items.map(it => {
           const tx = it.transform;
-          const fontSize = Math.round(Math.abs(tx[3]) * renderScale);
+          const preciseFontSize = Math.hypot(tx[2], tx[3]) * renderScale;
+          const fontSize = Math.max(1, Math.round(preciseFontSize));
           const x = tx[4] * renderScale;
           const y = vp.height - tx[5] * renderScale;
           const width = it.width * renderScale;
@@ -175,17 +211,33 @@ export default function usePdfDocument({ canvasRef, setAnnotations, setHistory, 
           const fn = it.fontName || '';
           const styleInfo = styles[fn];
           const actualFamily = styleInfo?.fontFamily || '';
-          const detFont = [
-            fn ? `"${fn}"` : null,
-            actualFamily ? `"${actualFamily}"` : null,
-            detectFontFamily(actualFamily || fn)
-          ].filter(Boolean).join(', ');
-          const detectedWeight = detectFontWeight(fn, actualFamily);
+          const metadata = getFontMetadata(fn);
+          const metadataNames = metadata.names || [];
+          const detectedWeight = metadata.bold
+            ? 700
+            : detectFontWeight(`${fn} ${metadataNames.join(' ')}`, actualFamily);
+          const isItalic = metadata.italic
+            || /italic|oblique/i.test(`${fn} ${actualFamily} ${metadataNames.join(' ')}`);
+          const fontMatch = detectFontMatch(fn, actualFamily, {
+            context: measureContext,
+            text: it.str || '',
+            width,
+            fontSize: preciseFontSize || fontSize,
+            fontWeight: detectedWeight,
+            fontStyle: isItalic ? 'italic' : 'normal',
+            skipMetric: metadata.vertical || Math.abs(tx[1]) > 0.01 || Math.abs(tx[2]) > 0.01,
+            exactCss: metadata.exactCss,
+            loadedName: metadata.loadedName,
+            cssFontFamily: metadata.cssFontFamily,
+            metadataNames,
+          });
           return {
             str: it.str || '', x, y, width, height, fontSize,
-            fontName: fn, actualFamily, detectedFont: detFont,
-            isBold: /bold/i.test(fn) || /bold/i.test(actualFamily) || detectedWeight >= 600,
-            isItalic: /italic|oblique/i.test(fn) || /italic|oblique/i.test(actualFamily),
+            fontName: fn, actualFamily, detectedFont: fontMatch.css,
+            detectedFontLabel: fontMatch.label,
+            detectedFontCategory: fontMatch.category,
+            isBold: detectedWeight >= 600,
+            isItalic,
             fontWeight: detectedWeight,
             baseline: y,
             hasEOL: it.hasEOL,
@@ -215,36 +267,57 @@ export default function usePdfDocument({ canvasRef, setAnnotations, setHistory, 
           }
           lineGroup.sort((a, b) => a.x - b.x);
 
-          // Build merged string with proper spacing
-          let mergedStr = '';
-          for (let k = 0; k < lineGroup.length; k++) {
-            if (k > 0) {
-              const prev = lineGroup[k - 1];
-              const gap = lineGroup[k].x - (prev.x + prev.width);
-              if (gap > 1) mergedStr += ' ';
+          // Keep adjacent fragments together only while their font signature
+          // matches. This prevents a bold label or bullet from deciding the
+          // family/style for an otherwise different line.
+          const chunks = [];
+          for (const item of lineGroup) {
+            const signature = [
+              item.detectedFont, item.fontSize, item.fontWeight, item.isItalic ? 'i' : 'n',
+            ].join('|');
+            const current = chunks[chunks.length - 1];
+            if (!current || current.signature !== signature) {
+              chunks.push({ signature, items: [item] });
+            } else {
+              current.items.push(item);
             }
-            mergedStr += lineGroup[k].str;
           }
-          if (!mergedStr.trim()) continue;
 
-          const minX = Math.min(...lineGroup.map(it => it.x));
-          const maxRight = Math.max(...lineGroup.map(it => it.x + it.width));
-          const maxHeight = Math.max(...lineGroup.map(it => it.height));
-          mergedLines.push({
-            str: mergedStr,
-            x: minX, y: ref.y,
-            width: maxRight - minX,
-            height: maxHeight,
-            fontSize: ref.fontSize,
-            fontName: ref.fontName,
-            actualFamily: ref.actualFamily,
-            detectedFont: ref.detectedFont,
-            isBold: ref.isBold,
-            isItalic: ref.isItalic,
-            fontWeight: ref.fontWeight,
-            baseline: ref.baseline,
-            isLine: true,
-          });
+          for (const chunk of chunks) {
+            const items = chunk.items;
+            const chunkRef = items[0];
+            let mergedStr = '';
+            for (let k = 0; k < items.length; k++) {
+              if (k > 0) {
+                const previous = items[k - 1];
+                const gap = items[k].x - (previous.x + previous.width);
+                if (gap > 1) mergedStr += ' ';
+              }
+              mergedStr += items[k].str;
+            }
+            if (!mergedStr.trim()) continue;
+
+            const minX = Math.min(...items.map(item => item.x));
+            const maxRight = Math.max(...items.map(item => item.x + item.width));
+            const maxHeight = Math.max(...items.map(item => item.height));
+            mergedLines.push({
+              str: mergedStr,
+              x: minX, y: chunkRef.y,
+              width: maxRight - minX,
+              height: maxHeight,
+              fontSize: chunkRef.fontSize,
+              fontName: chunkRef.fontName,
+              actualFamily: chunkRef.actualFamily,
+              detectedFont: chunkRef.detectedFont,
+              detectedFontLabel: chunkRef.detectedFontLabel,
+              detectedFontCategory: chunkRef.detectedFontCategory,
+              isBold: chunkRef.isBold,
+              isItalic: chunkRef.isItalic,
+              fontWeight: chunkRef.fontWeight,
+              baseline: chunkRef.baseline,
+              isLine: true,
+            });
+          }
         }
 
         if (!cancelled) setPdfTextItems(mergedLines);
@@ -280,9 +353,7 @@ export default function usePdfDocument({ canvasRef, setAnnotations, setHistory, 
      ================================================================ */
   const doClearWorkspace = useCallback(async () => {
     await clearPDFFromDB();
-    localStorage.removeItem('pdf_editor_annotations');
-    localStorage.removeItem('pdf_editor_current_page');
-    localStorage.removeItem('pdf_editor_zoom');
+    clearPDFEditorLocalStorage();
 
     setFile(null);
     setPdfDoc(null);
@@ -290,6 +361,9 @@ export default function usePdfDocument({ canvasRef, setAnnotations, setHistory, 
     setHistory([{}]);
     setHistoryIdx(0);
     setPdfBytes(null);
+    pdfBytesRef.current = null;
+    setPdfTextItems([]);
+    setDocumentError('');
     setThumbnails({});
     setSelectedIdx(null);
   }, [setAnnotations, setHistory, setHistoryIdx, setSelectedIdx]);
@@ -305,6 +379,7 @@ export default function usePdfDocument({ canvasRef, setAnnotations, setHistory, 
     renderScale,
     loading,
     pageReady,
+    documentError,
     pdfTextItems,
     thumbnails,
     showThumbs, setShowThumbs,

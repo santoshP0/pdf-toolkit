@@ -1,9 +1,16 @@
-import { formatSize } from '../../App';
+import { formatSize } from './format';
 
 /* ── Dropzone ── */
 export function Dropzone({ dragOver, dropzoneProps, inputRef, onInputChange, icon, label, accept = '.pdf', multi = false }) {
   return (
-    <div className={`dropzone${dragOver ? ' dragover' : ''}`} {...dropzoneProps}>
+    <div className={`dropzone${dragOver ? ' dragover' : ''}`} {...dropzoneProps}
+      role="button" tabIndex={0} aria-label={label || 'Choose a PDF file'}
+      onKeyDown={event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          inputRef.current?.click();
+        }
+      }}>
       <div className="dropzone-icon">{icon || '\uD83D\uDCC4'}</div>
       <div className="dropzone-text">
         <strong>{label || 'Drop a PDF file here'}</strong> or click to browse
@@ -31,7 +38,7 @@ export function FileInfo({ file, pageCount, onRemove, extra }) {
           {pageCount > 0 && <> &middot; {pageCount} pages</>}
           {extra}
         </span>
-        <button className="file-remove" onClick={onRemove}>{'\u00D7'}</button>
+        <button className="file-remove" onClick={onRemove} aria-label={`Remove ${file.name}`}>{'\u00D7'}</button>
       </div>
     </div>
   );
@@ -42,7 +49,7 @@ export function ProgressBar({ progress, label }) {
   return (
     <div style={{ marginBottom: '1.5rem' }}>
       <div className="progress-text">{label || 'Processing...'} {progress}%</div>
-      <div className="progress-bar">
+      <div className="progress-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress} aria-label={label || 'Processing'}>
         <div className="progress-fill" style={{ width: `${progress}%` }} />
       </div>
     </div>

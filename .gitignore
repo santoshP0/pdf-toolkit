@@ -10,7 +10,31 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+public/runtime/
 *.local
+
+# Credentials and local environment settings
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+*.pem
+*.key
+.aws/
+
+# Cloudflare, test, and build caches
+.wrangler/
+.vite/
+coverage/
+test-results/
+playwright-report/
+*.tsbuildinfo
+
+# Local agent state
+.agents/
+.codex/
 
 # Editor directories and files
 .vscode/*

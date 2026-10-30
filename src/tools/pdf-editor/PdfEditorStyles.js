@@ -12,7 +12,8 @@ const S = {
   },
 
   body: {
-    display: 'flex', flex: 1, minHeight: 0,
+    display: 'flex', flex: 1, minHeight: 0, minWidth: 0,
+    position: 'relative',
   },
 
   /* Slim left toolbar */
@@ -61,7 +62,7 @@ const S = {
 
   /* Canvas area */
   canvasArea: {
-    flex: 1, overflow: 'hidden', position: 'relative',
+    flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative',
     background: 'var(--bg2)',
     backgroundImage: 'radial-gradient(var(--sketch-dot) 0.8px, transparent 0.8px)',
     backgroundSize: '16px 16px',
@@ -69,13 +70,18 @@ const S = {
   canvasScroller: {
     width: '100%', height: '100%',
     overflow: 'auto', position: 'relative',
-    display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
-    padding: 32,
+    padding: 36,
   },
+  pageStage: (pageSize, zoom) => ({
+    position: 'relative',
+    width: Math.max(1, pageSize.width * zoom),
+    height: Math.max(1, pageSize.height * zoom),
+    margin: '0 auto',
+  }),
   canvasContainer: (zoom) => ({
-    position: 'relative', display: 'inline-block', flexShrink: 0,
+    position: 'absolute', top: 0, left: 0, display: 'inline-block',
     transform: `scale(${zoom})`,
-    transformOrigin: 'top center',
+    transformOrigin: 'top left',
     transition: 'transform 0.06s ease-out',
   }),
   pageShadow: {
@@ -111,7 +117,7 @@ const S = {
 
   /* Right panel */
   rightPanel: (visible) => ({
-    width: visible ? 240 : 0, flexShrink: 0,
+    width: visible ? 288 : 0, flexShrink: 0,
     background: 'var(--surface)',
     borderLeft: visible ? '1px solid var(--border)' : 'none',
     display: 'flex', flexDirection: 'column',

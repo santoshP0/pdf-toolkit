@@ -6,9 +6,9 @@
 :root {
   /* Shared */
   --radius: 4px;
-  --font-sans: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Space Grotesk Variable', ui-sans-serif, system-ui, sans-serif;
   --font-hand: 'Architects Daughter', var(--font-sans);
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-mono: 'JetBrains Mono Variable', 'Fira Code', monospace;
   --transition: 0.1s ease-out;
 
   /* Light palette */
@@ -20,6 +20,7 @@
   --bg2: #eae3d8;
   --surface: #fbf9f5;
   --surface2: #f3efe6;
+  --surface-hover: #eee8de;
   --border: var(--sketch-text);
   --border-hi: var(--sketch-text);
   --accent: var(--sketch-text);
@@ -45,6 +46,7 @@ html[data-theme="dark"] {
   --bg2: #1a1a1f;
   --surface: #1e1e24;
   --surface2: #28282f;
+  --surface-hover: #303038;
   --border: #3e3e4a;
   --border-hi: #5a5a6e;
   --accent: #8ecadb;
@@ -118,6 +120,7 @@ input, select, textarea {
 }
 
 /* Custom scrollbar */
+:focus-visible { outline: 3px solid var(--cat-edit); outline-offset: 4px; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--sketch-bg); }
 ::-webkit-scrollbar-thumb {
@@ -139,6 +142,7 @@ input, select, textarea {
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;

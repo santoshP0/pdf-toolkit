@@ -3,22 +3,14 @@ import { PDFDocument, degrees } from 'pdf-lib';
 import usePdfTool from './shared/usePdfTool';
 import { Dropzone, FileInfo, ActionRow } from './shared/PdfToolUI';
 
-function getPdfjsLib() {
-  return import('pdfjs-dist').then(mod => {
-    const pdfjsLib = mod;
-    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-    }
-    return pdfjsLib;
-  });
-}
+import { getPdfjsLib } from './shared/pdfjs';
 
 export default function OrganizePages() {
   const {
     file, setFile,
     processing, setProcessing,
     dragOver, inputRef,
-    dropzoneProps, onInputChange,
+    dropzoneProps,
     exportPdfBytes, hasFile,
   } = usePdfTool();
 

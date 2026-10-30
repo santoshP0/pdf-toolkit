@@ -29,6 +29,7 @@ export default function usePdfKeyboard({
   clipboard,
   setSearchOpen,
   searchInputRef,
+  editingText,
 }) {
   useEffect(() => {
     const onKey = (e) => {
@@ -46,6 +47,18 @@ export default function usePdfKeyboard({
 
       const key = e.key.toLowerCase();
       const ctrl = e.ctrlKey || e.metaKey;
+
+      // An edit session can remain active while a native picker or toolbar
+      // temporarily owns focus. Never interpret typed note text as tool keys.
+      if (editingText) {
+        if (e.key === 'Escape') {
+          setEditingText(null);
+          setSelectedIdx(null);
+          setContextMenu(null);
+          e.preventDefault();
+        }
+        return;
+      }
 
       if (e.code === 'Space' && !ctrl) {
         e.preventDefault(); setSpaceHeld(true); return;
@@ -101,5 +114,5 @@ export default function usePdfKeyboard({
   }, [selectedIdx, currentPage, totalPages, deleteAnn, duplicateAnn, undo, redo,
       fitToWidth, setAnnsH, setActiveTool, setSelectedIdx, setEditingText,
       setContextMenu, setZoom, setCurrentPage, setShowThumbs, setSpaceHeld, setIsPanning,
-      copyAnn, pasteAnn, clipboard, setSearchOpen, searchInputRef]);
+      copyAnn, pasteAnn, clipboard, setSearchOpen, searchInputRef, editingText]);
 }

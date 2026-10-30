@@ -13,7 +13,7 @@ export default function SplitPdf() {
     progress, setProgress,
     dragOver, inputRef,
     loadFile: baseLoadFile,
-    dropzoneProps, onInputChange,
+    dropzoneProps,
     reset: baseReset,
     exportPdfBytes, hasFile,
   } = tool;

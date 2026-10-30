@@ -1,5 +1,14 @@
 import { useState, useRef, useCallback } from 'react';
-import { getBounds, getHandleAt, hitTest, moveAnn, cloneAnn, SNAP_THRESHOLD } from './helpers';
+import {
+  clamp,
+  getBounds,
+  getHandleAt,
+  hitTest,
+  moveAnn,
+  NOTE_MIN_HEIGHT,
+  NOTE_MIN_WIDTH,
+  uid,
+} from './helpers';
 
 /* ================================================================
    usePdfInteraction hook
@@ -14,11 +23,10 @@ export default function usePdfInteraction({
   strokeColor, setStrokeColor,
   strokeWidth, fillColor,
   textBold, textItalic, textSize, setTextSize,
-  selectedFont, setSelectedFont,
+  setSelectedFont,
   setStrokeWidth,
   setTextBold, setTextItalic,
   setSelectedIdx,
-  pdfTextItems,
   addAnn, deleteAnn,
   pushHistory,
   setAnnotations,
@@ -109,8 +117,7 @@ export default function usePdfInteraction({
             setTextBold(ann.fontWeight >= 700);
             setTextItalic(ann.fontStyle === 'italic');
             const matchFontOption = FONTS.find(f => f.css === ann.fontFamily);
-            if (matchFontOption) setSelectedFont(matchFontOption.id);
-            else setSelectedFont('auto');
+            setSelectedFont(ann.fontSelection || matchFontOption?.id || 'auto');
           }
           return;
         }
@@ -124,13 +131,22 @@ export default function usePdfInteraction({
       for (let i = pageAnns.length - 1; i >= 0; i--) {
         if (pageAnns[i].type === 'text' && hitTest(pageAnns[i], pos.x, pos.y)) {
           const ann = pageAnns[i];
+          const matchFontOption = FONTS.find(f => f.css === ann.fontFamily);
+          setSelectedFont(ann.fontSelection || matchFontOption?.id || 'auto');
+          setTextSize(ann.fontSize || textSize);
+          setTextBold(ann.fontWeight >= 700);
+          setTextItalic(ann.fontStyle === 'italic');
           setEditingText({
+            sessionId: uid(),
             x: ann.x, y: ann.y,
             value: ann.text, originalValue: ann.text, editIdx: i,
             matchedFontSize: ann.fontSize,
             matchedBold: ann.fontWeight >= 700,
             matchedItalic: ann.fontStyle === 'italic',
             matchedColor: ann.color,
+            matchedFont: ann.fontFamily,
+            detectedFont: ann.detectedFont || ann.fontFamily,
+            detectedFontLabel: ann.detectedFontLabel,
             note: !!ann.note,
             clickX: pos.x,
           });
@@ -138,7 +154,21 @@ export default function usePdfInteraction({
           return;
         }
       }
-      setEditingText({ x: pos.x, y: pos.y, value: '', note: true, matchedBold: textBold, matchedItalic: textItalic });
+      const noteWidth = Math.min(NOTE_MIN_WIDTH, Math.max(40, pageSize.width - 8));
+      const noteHeight = Math.max(NOTE_MIN_HEIGHT, textSize * 1.25 + 16);
+      const minX = Math.min(10, pageSize.width / 2);
+      const maxX = Math.max(minX, pageSize.width - noteWidth + 2);
+      const minY = Math.min(textSize + 10, pageSize.height / 2);
+      const maxY = Math.max(minY, pageSize.height + textSize + 2 - noteHeight);
+      setEditingText({
+        sessionId: uid(),
+        x: clamp(pos.x, minX, maxX),
+        y: clamp(pos.y, minY, maxY),
+        value: '',
+        note: true,
+        matchedBold: textBold,
+        matchedItalic: textItalic,
+      });
       setSelectedIdx(null);
       return;
     }
@@ -147,13 +177,22 @@ export default function usePdfInteraction({
       for (let i = pageAnns.length - 1; i >= 0; i--) {
         if (pageAnns[i].type === 'text' && hitTest(pageAnns[i], pos.x, pos.y)) {
           const ann = pageAnns[i];
+          const matchFontOption = FONTS.find(f => f.css === ann.fontFamily);
+          setSelectedFont(ann.fontSelection || matchFontOption?.id || 'auto');
+          setTextSize(ann.fontSize || textSize);
+          setTextBold(ann.fontWeight >= 700);
+          setTextItalic(ann.fontStyle === 'italic');
           setEditingText({
+            sessionId: uid(),
             x: ann.x, y: ann.y,
             value: ann.text, originalValue: ann.text, editIdx: i,
             matchedFontSize: ann.fontSize,
             matchedBold: ann.fontWeight >= 700,
             matchedItalic: ann.fontStyle === 'italic',
             matchedColor: ann.color,
+            matchedFont: ann.fontFamily,
+            detectedFont: ann.detectedFont || ann.fontFamily,
+            detectedFontLabel: ann.detectedFontLabel,
             note: !!ann.note,
             clickX: pos.x,
           });
@@ -181,14 +220,21 @@ export default function usePdfInteraction({
           }
         }
         setTextSize(hit.fontSize);
+        setTextBold(hit.isBold);
+        setTextItalic(hit.isItalic);
+        setSelectedFont('auto');
         setStrokeColor(sampledColor);
         setEditingText({
+          sessionId: uid(),
           x: hit.x, y: hit.baseline,
           value: hit.str, originalValue: hit.str,
           matchedFontSize: hit.fontSize,
           matchedBold: hit.isBold, matchedItalic: hit.isItalic,
           matchedWeight: hit.fontWeight || 400,
           matchedColor: sampledColor, matchedFont: hit.detectedFont,
+          detectedFont: hit.detectedFont,
+          detectedFontLabel: hit.detectedFontLabel,
+          detectedFontCategory: hit.detectedFontCategory,
           pdfTextItem: hit, clickX: pos.x,
         });
         setSelectedIdx(null);
@@ -197,12 +243,28 @@ export default function usePdfInteraction({
       }
 
       const nearby = findNearestTextItem(pos.x, pos.y, 60);
-      if (nearby) setTextSize(nearby.fontSize);
+      if (nearby) {
+        setTextSize(nearby.fontSize);
+        setTextBold(nearby.isBold);
+        setTextItalic(nearby.isItalic);
+        setSelectedFont('auto');
+      }
       const g = computeGuides(pos.x, pos.y);
       const sx = g.v.length > 0 ? g.v[0] : pos.x;
       const sy = g.h.length > 0 ? g.h[0] : pos.y;
       setGuides(g);
-      setEditingText({ x: sx, y: sy, value: '', matchedBold: textBold, matchedItalic: textItalic });
+      setEditingText({
+        sessionId: uid(),
+        x: sx, y: sy, value: '',
+        matchedFontSize: nearby?.fontSize,
+        matchedBold: nearby?.isBold ?? textBold,
+        matchedItalic: nearby?.isItalic ?? textItalic,
+        matchedWeight: nearby?.fontWeight,
+        matchedFont: nearby?.detectedFont,
+        detectedFont: nearby?.detectedFont,
+        detectedFontLabel: nearby?.detectedFontLabel,
+        detectedFontCategory: nearby?.detectedFontCategory,
+      });
       setSelectedIdx(null);
       return;
     }
@@ -225,7 +287,7 @@ export default function usePdfInteraction({
   }, [activeTool, pageAnns, selectedIdx, getPos, deleteAnn, spaceHeld, findTextItemAt,
       findNearestTextItem, computeGuides, setSelectedIdx, setStrokeColor,
       setStrokeWidth, setTextSize, setTextBold, setTextItalic, setSelectedFont,
-      textBold, textItalic, FONTS, overlayRef, scrollRef, canvasRef]);
+      textBold, textItalic, textSize, pageSize, FONTS, overlayRef, scrollRef, canvasRef]);
 
   /* ------------------------------------------------------------------ */
   const handlePointerMove = useCallback((e) => {
@@ -335,7 +397,7 @@ export default function usePdfInteraction({
   const handlePointerUp = useCallback((e) => {
     if (isPanning) { setIsPanning(false); panStartRef.current = null; return; }
     if (draggingIdx !== null) {
-      setAnnotations(prev => { pushHistory(prev); return prev; });
+      pushHistory();
       setDraggingIdx(null);
       setResizeDirection(null);
       resizeStartRef.current = null;
@@ -356,7 +418,7 @@ export default function usePdfInteraction({
     setShapeStart(null);
     setShapePreview(null);
   }, [isPanning, draggingIdx, isDrawing, activeTool, currentPath, shapePreview,
-      strokeColor, fillColor, strokeWidth, addAnn, pushHistory, setAnnotations, overlayRef]);
+      strokeColor, fillColor, strokeWidth, addAnn, pushHistory, overlayRef]);
 
 
   /* ------------------------------------------------------------------ */
@@ -365,10 +427,18 @@ export default function usePdfInteraction({
     for (let i = pageAnns.length - 1; i >= 0; i--) {
       if (pageAnns[i].type === 'text' && hitTest(pageAnns[i], pos.x, pos.y)) {
         const ann = pageAnns[i];
+        const matchFontOption = FONTS.find(f => f.css === ann.fontFamily);
+        setSelectedFont(ann.fontSelection || matchFontOption?.id || 'auto');
+        setTextSize(ann.fontSize || textSize);
+        setTextBold(ann.fontWeight >= 700);
+        setTextItalic(ann.fontStyle === 'italic');
         setEditingText({
+          sessionId: uid(),
           x: ann.x, y: ann.y, value: ann.text, editIdx: i,
           matchedFontSize: ann.fontSize, matchedBold: ann.fontWeight >= 700,
           matchedItalic: ann.fontStyle === 'italic', matchedFont: ann.fontFamily,
+          detectedFont: ann.detectedFont || ann.fontFamily,
+          detectedFontLabel: ann.detectedFontLabel,
           note: !!ann.note, clickX: pos.x,
         });
         setSelectedIdx(null);
@@ -376,7 +446,8 @@ export default function usePdfInteraction({
         return;
       }
     }
-  }, [pageAnns, getPos, setSelectedIdx, setActiveTool]);
+  }, [pageAnns, getPos, setSelectedIdx, setActiveTool, setSelectedFont,
+      setTextSize, setTextBold, setTextItalic, FONTS, textSize]);
 
   /* ------------------------------------------------------------------ */
   const handleClearWorkspace = useCallback(() => {

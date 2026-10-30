@@ -2,15 +2,7 @@ import { useState } from 'react';
 import usePdfTool from './shared/usePdfTool';
 import { Dropzone, FileInfo, ProgressBar, ActionRow } from './shared/PdfToolUI';
 
-function getPdfjsLib() {
-  return import('pdfjs-dist').then(mod => {
-    const pdfjsLib = mod;
-    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-    }
-    return pdfjsLib;
-  });
-}
+import { getPdfjsLib } from './shared/pdfjs';
 
 export default function PdfToImages() {
   const {
@@ -19,7 +11,7 @@ export default function PdfToImages() {
     processing, setProcessing,
     progress, setProgress,
     dragOver, inputRef,
-    dropzoneProps, onInputChange,
+    dropzoneProps,
     reset, hasFile,
   } = usePdfTool();
 

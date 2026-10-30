@@ -23,16 +23,21 @@ function PdfEditorLayersPanel({
   deleteAnn, reorderLayers,
   dragOverLayerIdx, setDragOverLayerIdx,
   setConfirmModal, setAnnsH, currentPage,
-  totalAnns, historyIdx, historyLength,
   FONT_OPTIONS, getBounds,
 }) {
   if (!showLayers) return null;
 
   return (
-    <>
+    <div
+      className="pdf-editor-inspector"
+      style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}
+    >
       {/* Layers list */}
-      <div style={{ ...S.panelSection, flex: 1, overflowY: 'auto' }}>
-        <div style={{ ...S.panelTitle, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <section
+        className="pdf-editor-inspector-layers"
+        style={{ ...S.panelSection, flex: '1 1 180px', minHeight: 120, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+      >
+        <div className="pdf-editor-inspector-title" style={{ ...S.panelTitle, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span>Layers</span>
             {pageAnns.length > 0 && (
@@ -55,8 +60,8 @@ function PdfEditorLayersPanel({
               }}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
-                fontSize: 9, fontFamily: 'var(--font-sans)', fontWeight: 600,
-                color: 'var(--text-muted)', padding: '2px 4px', borderRadius: 3,
+                fontSize: 10, fontFamily: 'var(--font-sans)', fontWeight: 700,
+                color: 'var(--text-muted)', padding: '4px 7px', minHeight: 28, borderRadius: 5,
                 transition: 'all 0.1s',
               }}
               onMouseEnter={e => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; }}
@@ -68,11 +73,17 @@ function PdfEditorLayersPanel({
           )}
         </div>
         {pageAnns.length === 0 ? (
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-sans)', padding: '8px 0', lineHeight: 1.5 }}>
-            No annotations on this page.
+          <div
+            className="pdf-editor-inspector-empty"
+            style={{
+              fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-sans)',
+              padding: '12px', lineHeight: 1.55, background: 'var(--bg2)', borderRadius: 6,
+            }}
+          >
+            No edits on this page yet. Choose a tool, then click or draw on the PDF.
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div className="pdf-editor-inspector-list" style={{ display: 'flex', flexDirection: 'column', overflowY: 'auto', minHeight: 0 }}>
             {[...pageAnns].reverse().map((ann, ri) => {
               const idx = pageAnns.length - 1 - ri;
               return (
@@ -126,7 +137,7 @@ function PdfEditorLayersPanel({
                       ? `"${(ann.text || '').slice(0, 14)}${(ann.text || '').length > 14 ? '..' : ''}"`
                       : TYPE_LABELS[ann.type] || ann.type}
                   </span>
-                  <button style={S.layerDel}
+                  <button style={{ ...S.layerDel, width: 28, height: 28, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                     onClick={(e) => { e.stopPropagation(); deleteAnn(idx); }}
                     onMouseEnter={e => e.currentTarget.style.opacity = '1'}
                     onMouseLeave={e => e.currentTarget.style.opacity = '0.5'}
@@ -136,12 +147,15 @@ function PdfEditorLayersPanel({
             })}
           </div>
         )}
-      </div>
+      </section>
 
       {/* Properties panel when annotation selected */}
       {selectedIdx !== null && pageAnns[selectedIdx] && (
-        <div style={S.panelSection}>
-          <div style={S.panelTitle}>Properties</div>
+        <section
+          className="pdf-editor-inspector-properties"
+          style={{ ...S.panelSection, maxHeight: '52%', minHeight: 0, overflowY: 'auto', flexShrink: 1, borderBottom: 'none' }}
+        >
+          <div className="pdf-editor-inspector-title" style={S.panelTitle}>Properties</div>
           {(() => {
             const ann = pageAnns[selectedIdx];
             const b = getBounds(ann);
@@ -405,27 +419,9 @@ function PdfEditorLayersPanel({
               </div>
             );
           })()}
-        </div>
+        </section>
       )}
-
-      {/* Stats panel */}
-      <div style={{ ...S.panelSection, borderBottom: 'none', marginTop: 'auto', background: 'var(--surface-hover)', borderTop: '1px solid var(--border)' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontFamily: 'var(--font-sans)', fontSize: 11, color: 'var(--text-muted)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>Active Page Layers</span>
-            <span style={{ fontWeight: 600, color: 'var(--sketch-text)' }}>{pageAnns.length}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>Total Document Layers</span>
-            <span style={{ fontWeight: 600, color: 'var(--sketch-text)' }}>{totalAnns}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>Undo History States</span>
-            <span style={{ fontWeight: 600, color: 'var(--sketch-text)' }}>{historyIdx + 1} / {historyLength}</span>
-          </div>
-        </div>
-      </div>
-    </>
+    </div>
   );
 }
 
